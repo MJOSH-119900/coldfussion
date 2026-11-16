@@ -15,7 +15,7 @@ export default function ProductForm({ currentVendorId, editProduct, onSuccess }:
     try {
       const formData = new FormData(e.currentTarget);
       const result = await saveProductAction(formData, currentVendorId, editProduct?.id);
-      if (!result.success) throw new Error(result.error || 'Could not save product');
+      if (!result.success) throw new Error('Could not save product');
       e.currentTarget.reset(); setSelectedCount(0); onSuccess(result.product as Product);
     } catch (error) { alert(error instanceof Error ? error.message : 'Could not save product'); }
     finally { setLoading(false); }

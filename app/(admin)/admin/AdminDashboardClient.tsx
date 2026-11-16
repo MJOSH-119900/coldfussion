@@ -188,14 +188,14 @@ function VendorSection() {
         try {
             const result = await saveAdminWhatsAppAction(adminWhatsApp);
             if (!result.success) { setWhatsAppMessage(result.error || 'Could not save the WhatsApp number.'); return; }
-            setAdminWhatsApp(result.phone);
+            setAdminWhatsApp(result.phone || '');
             setWhatsAppMessage(result.phone ? 'Admin WhatsApp number saved. New vendor applications will open a pre-filled WhatsApp message to this number.' : 'Admin WhatsApp number cleared. Applications will still be saved for review.');
         } finally { setSavingWhatsApp(false); }
     };
     const decide = async (action: 'approve' | 'reject') => { setWorking(true); setMessage(''); const id = applicationId.trim(); const result = action === 'approve' ? await approveVendorRequestAction(id) : await rejectVendorRequestAction(id); setWorking(false); if (!result.success) {
         setMessage(result.error || 'Unable to process this application.');
         return;
-    } setMessage(action === 'approve' ? `Application approved. Vendor ID: ${'vendor' in result ? result.vendor.vendor_id : 'created'}` : 'Application rejected.'); setApplicationId(''); await reload(); };
+    } setMessage(action === 'approve' ? `Application approved. Vendor ID: ${'vendor' in result ? (result.vendor as { vendor_id: string }).vendor_id : 'created'}` : 'Application rejected.'); setApplicationId(''); await reload(); };
     const pending = requests.filter(r => r.status === 'pending');
     return <div className="space-y-4">
     <div className="rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm">

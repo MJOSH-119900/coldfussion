@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { randomUUID } from 'crypto';
-const DATA_DIR = path.resolve(process.env.FUSSION_DATA_DIR || './data');
+const DATA_DIR = path.resolve(/* turbopackIgnore: true */ process.env.FUSSION_DATA_DIR || './data');
 const LOCK_DIR = path.join(DATA_DIR, '.locks');
 export type JsonFileName = 'vendors.json' | 'vendor_requests.json' | 'products.json' | 'users_auth.json' | 'orders.json' | 'analytics.json' | 'counters.json' | 'likes.json' | 'auth_otps.json' | 'music.json' | 'music_settings.json' | 'site_settings.json';
 const defaults: Record<JsonFileName, unknown> = {

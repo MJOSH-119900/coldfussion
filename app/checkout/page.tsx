@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { Suspense } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useCart } from '../(public)/components/CartProvider';
@@ -7,6 +8,10 @@ import { CartItem } from '../(public)/components/types/store';
 import { useToast } from '../components/ToastProvider';
 import { createWhatsAppOrders } from '../../lib/marketplace';
 export default function CheckoutPage() {
+    return <Suspense fallback={<main className="mx-auto max-w-4xl px-4 py-20 text-center"><p className="text-sm font-semibold text-slate-500">Preparing your checkout…</p></main>}><CheckoutContent /></Suspense>;
+}
+
+function CheckoutContent() {
     const searchParams = useSearchParams();
     const { cart, cartTotal, clearCart, isReady } = useCart();
     const { notify } = useToast();

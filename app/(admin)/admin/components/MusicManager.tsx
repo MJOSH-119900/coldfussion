@@ -41,6 +41,7 @@ export default function MusicManager({ initialTracks }: { initialTracks: MusicTr
                     throw new Error(result.error);
                 }
 
+                if (!result.track) throw new Error('The uploaded song could not be saved.');
                 setTracks((current) => [...current, result.track]);
                 form.reset();
                 notify(

@@ -29,7 +29,7 @@ export default function DashboardPortal() {
     if (!confirm('Delete this product? This removes it from the storefront.')) return;
     startTransition(async () => {
       const result = await deleteProductAction(id);
-      if (!result.success) { alert(result.error || 'Delete failed'); return; }
+      if (!result.success) { alert('Delete failed'); return; }
       setAllProducts(prev => prev.filter(p => p.id !== id));
       if (editingProduct?.id === id) setEditingProduct(undefined);
     });
