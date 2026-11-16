@@ -6,6 +6,7 @@ import ProductCard from '../../(public)/components/ProductCard';
 import { useCart } from '../../(public)/components/CartProvider';
 import { Product } from '../../(public)/components/types/store';
 import productsData from '../../(public)/components/data/products.json';
+import { useBranding } from '../../(public)/components/BrandingProvider';
 
 export default function ProductDetails({ product }: { product?: Product }) {
   const [activeImage, setActiveImage] = useState(0);
@@ -13,6 +14,7 @@ export default function ProductDetails({ product }: { product?: Product }) {
   const [inWishlist, setInWishlist] = useState(false);
   const [quantity, setQuantity] = useState(1);
   const { addToCart } = useCart();
+  const { brand } = useBranding();
 
   useEffect(() => {
     if (!product) return;
@@ -24,7 +26,7 @@ export default function ProductDetails({ product }: { product?: Product }) {
     } catch { /* ignore invalid legacy storage */ }
   }, [product]);
 
-  if (!product) return <main className="py-24 text-center"><p className="font-semibold">Product not found.</p><Link href="/" className="mt-4 inline-block text-violet-700">Back to Fussion</Link></main>;
+  if (!product) return <main className="py-24 text-center"><p className="font-semibold">Product not found.</p><Link href="/" className="mt-4 inline-block text-violet-700">Back to {brand.companyName}</Link></main>;
 
   const gallery = product.detail_gallery_enabled ? (product.images || []).slice(0, 7) : (product.images || []).slice(0, 1);
   const related = (productsData as Product[]).filter(p => p.category === product.category && p.id !== product.id).slice(0, 4);
@@ -51,7 +53,7 @@ export default function ProductDetails({ product }: { product?: Product }) {
 
   return (
     <main className="mx-auto max-w-6xl px-4 py-8 sm:py-12">
-      <Link href="/" className="mb-7 inline-flex text-sm font-semibold text-slate-500 hover:text-violet-700">← Back to Fussion</Link>
+      <Link href="/" className="mb-7 inline-flex text-sm font-semibold text-slate-500 hover:text-violet-700">← Back to {brand.companyName}</Link>
       <div className="grid gap-10 md:grid-cols-2">
         <div>
           <div className="overflow-hidden rounded-3xl bg-slate-100">

@@ -120,7 +120,7 @@ export default function MusicManager({ initialTracks }: { initialTracks: MusicTr
                     <input
                         required
                         name="title"
-                        placeholder="e.g. Fussion Morning"
+                        placeholder="e.g. Morning playlist"
                         className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-violet-500"
                     />
                 </div>

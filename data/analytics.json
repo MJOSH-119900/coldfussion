@@ -38,5 +38,21 @@
     "vendor_id": "VEN0001",
     "visitor_id": "visitor-7f50bc4f-864a-4cfd-b041-23cb107f3417",
     "timestamp": "2026-11-16T15:33:55.937Z"
+  },
+  {
+    "event_id": "evt-1794860524700-u24o",
+    "type": "view",
+    "product_id": "prod-4",
+    "vendor_id": "vendor_alpha",
+    "visitor_id": "visitor-7f50bc4f-864a-4cfd-b041-23cb107f3417",
+    "timestamp": "2026-11-16T20:22:04.679Z"
+  },
+  {
+    "event_id": "evt-1794864937930-mpz2",
+    "type": "view",
+    "product_id": "prod-1",
+    "vendor_id": "vendor_alpha",
+    "visitor_id": "visitor-7f50bc4f-864a-4cfd-b041-23cb107f3417",
+    "timestamp": "2026-11-16T21:35:37.912Z"
   }
 ]

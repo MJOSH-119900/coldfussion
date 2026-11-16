@@ -7,6 +7,7 @@ import { useCart } from '../(public)/components/CartProvider';
 import { CartItem } from '../(public)/components/types/store';
 import { useToast } from '../components/ToastProvider';
 import { createWhatsAppOrders } from '../../lib/marketplace';
+import { useBranding } from '../(public)/components/BrandingProvider';
 export default function CheckoutPage() {
     return <Suspense fallback={<main className="mx-auto max-w-4xl px-4 py-20 text-center"><p className="text-sm font-semibold text-slate-500">Preparing your checkout…</p></main>}><CheckoutContent /></Suspense>;
 }
@@ -15,6 +16,7 @@ function CheckoutContent() {
     const searchParams = useSearchParams();
     const { cart, cartTotal, clearCart, isReady } = useCart();
     const { notify } = useToast();
+    const { brand } = useBranding();
     const [buyNowLoaded, setBuyNowLoaded] = useState(false);
     const [buyNowItems, setBuyNowItems] = useState<CartItem[]>([]);
     const [customerName, setCustomerName] = useState('');
@@ -59,7 +61,7 @@ function CheckoutContent() {
             const vendorItem = items.find(i => i.vendor_id === order.vendor_id);
             const number = (order.vendor_whatsapp || vendorItem?.vendor_whatsapp || '').replace(/\D/g, '');
             const lines = order.items.map(i => `- ${i.product_name}${i.selected_size ? ` (${i.selected_size})` : ''} x${i.quantity} = ₦${i.subtotal.toLocaleString()}`);
-            const message = `Hello! I would like to order from Fussion Store.\n\nCheckout Reference: ${order.checkout_id || checkoutId}\nVendor Order ID: ${order.order_id}\n\n${lines.join('\n')}\n\nTotal: ₦${order.total.toLocaleString()}\n\nPlease confirm availability and payment details.`;
+            const message = `Hello! I would like to order from ${brand.companyName}.\n\nCheckout Reference: ${order.checkout_id || checkoutId}\nVendor Order ID: ${order.order_id}\n\n${lines.join('\n')}\n\nTotal: ₦${order.total.toLocaleString()}\n\nPlease confirm availability and payment details.`;
             return { orderId: order.order_id, url: `https://wa.me/${number}?text=${encodeURIComponent(message)}` };
         });
         setWhatsappLinks(links);

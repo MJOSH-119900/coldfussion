@@ -8,9 +8,10 @@ interface FormProps {
     editProduct?: Product;
     products: Product[];
     onSuccess: (product: Product) => void | Promise<void>;
+    onCancel?: () => void;
     isAdmin?: boolean;
 }
-export default function ProductForm({ currentVendorId, editProduct, products, onSuccess, isAdmin = false }: FormProps) {
+export default function ProductForm({ currentVendorId, editProduct, products, onSuccess, onCancel, isAdmin = false }: FormProps) {
     const [loading, setLoading] = useState(false);
     const [selectedCount, setSelectedCount] = useState(0);
     const { notify } = useToast();
@@ -41,12 +42,12 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     <div><label className="mb-1 block text-sm font-semibold text-slate-700">Product title</label><input required name="title" defaultValue={editProduct?.title} className="w-full rounded-lg border px-3 py-2"/></div>
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
       <div><label className="mb-1 block text-sm font-semibold text-slate-700">Selling price (₦)</label><input required min="0" step="0.01" type="number" name="price" defaultValue={editProduct?.price ?? ''} placeholder="Enter current selling price" className="w-full rounded-lg border px-3 py-2"/></div>
-      <div><label className="mb-1 block text-sm font-semibold text-slate-700">Previous price / slash price (₦)</label><input min="0" step="0.01" type="number" name="compare_at_price" defaultValue={editProduct?.compare_at_price ?? ''} placeholder="Optional — must exceed selling price" className="w-full rounded-lg border px-3 py-2"/>{editProduct?.compare_at_price && editProduct.compare_at_price > editProduct.price ? <p className="mt-1 text-xs text-slate-500">Current discount: <span className="font-semibold text-slate-700">₦{editProduct.price.toLocaleString()}</span> <span className="ml-1 text-slate-400 line-through">₦{editProduct.compare_at_price.toLocaleString()}</span></p> : <p className="mt-1 text-xs text-slate-500">Enter a previous price higher than the selling price to show a slash discount.</p>}</div>
+      <div><label className="mb-1 block text-sm font-semibold text-slate-700">Previous price for all sizes (₦)</label><input min="0" step="0.01" type="number" name="compare_at_price" defaultValue={editProduct?.compare_at_price ?? ''} placeholder="Optional — applies to all sizes" className="w-full rounded-lg border px-3 py-2"/><p className="mt-1 text-xs text-slate-500">This is the default slash price for every size. A previous price after a semicolon below overrides it for that size only.</p></div>
     </div>
     <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4">
-      <label className="mb-1 block text-sm font-bold text-slate-800">Sizes with separate prices (optional)</label>
-      <p className="mb-2 text-xs text-slate-600">Enter one size and price per line, for example: Small = 5000, Medium = 6500, Large = 8000. Leave blank for a single-price product.</p>
-      <textarea name="size_prices_text" rows={4} defaultValue={(editProduct?.size_prices || []).map(v => `${v.size} = ${v.price}`).join('\n')} placeholder={'Small = 5000\nMedium = 6500\nLarge = 8000'} className="w-full rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm" />
+      <label className="mb-1 block text-sm font-bold text-slate-800">Custom sizes and prices (optional)</label>
+      <p className="mb-2 text-xs leading-5 text-slate-600">Add up to 20 sizes, one per line. The main previous-price field applies to all sizes. Add a previous price after a semicolon to override it for that size only. Format: <strong>Size = Price | Equivalent; Previous price</strong>. For example, with a main previous price of 8000, S = 5000; 6500 gives S its own 6500 previous price, while M = 7000 keeps the main 8000 previous price.</p>
+      <textarea name="size_prices_text" rows={5} defaultValue={(editProduct?.size_prices || []).map(v => `${v.size} = ${v.price}${v.conventional_size ? ` | ${v.conventional_size}` : ''}${v.compare_at_price ? `; ${v.compare_at_price}` : ''}`).join('\n')} placeholder={'S = 5000; 6500\nM = 7000\nXL = 8000'} className="w-full rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm" />
     </div>
 
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -57,6 +58,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
       <label className="mb-1 block text-sm font-bold text-slate-800">Product photos (up to 7)</label>
       <p className="mb-3 text-xs text-slate-500">The first image is the main listing image. Upload up to 7 pictures, maximum 12 MB each. Supported files: JPG, JPEG, PNG, WEBP, GIF or AVIF. Use the original picture file, not a web-page link, PDF, HEIC or SVG.</p>
+      {!isAdmin && <p className="mb-3 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-xs leading-5 text-violet-900">Photo tip: Use sharp, well-lit pictures of the actual item, with a clean background and a few helpful angles. Quality photos can build trust and attract more buyers.</p>}
       <input type="file" name="image_files" accept=".jpg,.jpeg,.png,.webp,.gif,.avif,image/jpeg,image/png,image/webp,image/gif,image/avif" multiple onChange={e => setSelectedCount(e.target.files?.length || 0)} className="w-full text-sm"/>
       <p className="mt-2 text-xs text-slate-500">{selectedCount ? `${selectedCount} new image(s) selected` : editProduct ? `${editProduct.images?.length || 0} current image(s)` : 'No images selected yet'}</p>
       {editProduct?.images?.length ? <div className="mt-3 flex flex-wrap gap-2">{editProduct.images.slice(0, 7).map((src, i) => <img key={`${src}-${i}`} src={src} alt={`Current product image ${i + 1}`} className="h-14 w-14 rounded-lg border object-cover"/>)}</div> : null}
@@ -87,6 +89,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
       {isAdmin && <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_top_selling" value="true" defaultChecked={editProduct?.is_top_selling ?? false}/> Feature in Top Sellers (admin only)</label>}
       <label className="flex items-center gap-3 text-sm font-semibold text-emerald-700"><input type="checkbox" name="giveaway" value="true" defaultChecked={editProduct?.giveaway ?? false}/> Announce this item as a giveaway</label>
       <input name="giveaway_announcement" defaultValue={editProduct?.giveaway_announcement || ''} placeholder="Optional giveaway announcement" className="w-full rounded-lg border px-3 py-2"/>
+      <p className="text-xs leading-5 text-slate-500">Giveaways appear as clickable storefront announcements and in the shopper giveaway pop-up. This setting is available to admins and vendors.</p>
     </div>
 
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -96,7 +99,13 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     <div><label className="mb-1 block text-sm font-semibold text-slate-700">Product WhatsApp fallback (optional)</label><input name="vendor_whatsapp" defaultValue={editProduct?.vendor_whatsapp || ''} placeholder="Leave blank to use your vendor profile WhatsApp" className="w-full rounded-lg border px-3 py-2"/><p className="mt-1 text-xs text-slate-500">Customers are directed to your vendor profile WhatsApp number at checkout.</p></div>
     <div><label className="mb-1 block text-sm font-semibold text-slate-700">Search keywords / tags</label><input name="tags" defaultValue={editProduct?.tags?.join(', ')} placeholder="wireless, audio, everyday" className="w-full rounded-lg border px-3 py-2"/></div>
     <div><label className="mb-1 block text-sm font-semibold text-slate-700">Description</label><textarea required name="description" rows={4} defaultValue={editProduct?.description} className="w-full rounded-lg border px-3 py-2"/></div>
-    <button type="submit" disabled={loading} className="w-full rounded-lg bg-slate-950 py-3 font-semibold text-white transition hover:bg-violet-700 disabled:opacity-50">{loading ? 'Saving product...' : editProduct ? 'Save product changes' : 'Publish product'}</button>
+    <div className={`grid gap-3 ${editProduct && onCancel ? 'sm:grid-cols-[auto_1fr]' : ''}`}>
+      {editProduct && onCancel && <button type="button" disabled={loading} onClick={onCancel} className="group inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-5 py-3 font-semibold text-slate-600 shadow-sm transition hover:border-rose-200 hover:bg-rose-50 hover:text-rose-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-rose-100 disabled:cursor-not-allowed disabled:opacity-50">
+        <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4 transition-transform group-hover:rotate-90"><path strokeLinecap="round" strokeLinejoin="round" d="m6 6 12 12M18 6 6 18"/></svg>
+        <span>Cancel edit</span>
+      </button>}
+      <button type="submit" disabled={loading} className="w-full rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-violet-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{loading ? 'Saving product...' : editProduct ? 'Save product changes' : 'Publish product'}</button>
+    </div>
     </div>
   </form>;
 }

@@ -1,14 +1,17 @@
 'use client';
 import Link from 'next/link';
 import { useEffect, useMemo, useState, useTransition } from 'react';
-import { Product } from '../../(public)/components/types/store';
+import { BannerSettings, OwnerAbout, Product } from '../../(public)/components/types/store';
 import ProductForm from './components/ProductForm';
 import {
     approveVendorRequestAction,
     deleteProductAction,
     getMarketplaceStatsAction,
     getAdminWhatsAppAction,
+    getBannerSettingsAction,
+    getAdminCustomerContentCountAction,
     getMusicTracksAction,
+    getOwnerAboutAction,
     getProductsAction,
     getVendorRequestsAction,
     getVendorsAction,
@@ -21,15 +24,34 @@ import { useRouter } from 'next/navigation';
 import { useToast } from '../../components/ToastProvider';
 import { getAdminOrdersAction } from '../../../lib/marketplace';
 import MusicManager from './components/MusicManager';
-const nav = ['Overview', 'Vendors', 'Products', 'Orders', 'Analytics', 'Reports', 'Giveaways', 'Music'];
+import BannerManager from './components/BannerManager';
+import BrandManager from './components/BrandManager';
+import AboutManager from './components/AboutManager';
+import CustomerInboxManager from './components/CustomerInboxManager';
+import UpgradeAnnouncementManager from './components/UpgradeAnnouncementManager';
+import BackupManager from './components/BackupManager';
+import AccountPasswordSecurity from '../../components/PasswordSecurity';
+import { useBranding } from '../../(public)/components/BrandingProvider';
+const navGroups = [
+    { label: 'Dashboard', items: ['Overview'] },
+    { label: 'Store management', items: ['Vendors', 'Products', 'Orders', 'Giveaways'] },
+    { label: 'Insights', items: ['Analytics', 'Reports'] },
+    { label: 'Storefront', items: ['Banners', 'Branding', 'About', 'Music', 'Upgrade notice'] },
+    { label: 'Customer care', items: ['Inbox'] },
+    { label: 'Administration', items: ['Backups', 'Security'] },
+];
 const PAGE_SIZE = 8;
 export default function DashboardPortal() {
     const [allProducts, setAllProducts] = useState<Product[]>([]);
     const [marketplace, setMarketplace] = useState<any>(null);
     const [musicTracks, setMusicTracks] = useState<Awaited<ReturnType<typeof getMusicTracksAction>>>([]);
+    const [bannerSettings, setBannerSettings] = useState<BannerSettings>({ slides: [], intervalValue: 5, intervalUnit: 'seconds' });
+    const [ownerAbout, setOwnerAbout] = useState<OwnerAbout>();
+    const [inboxCount, setInboxCount] = useState(0);
     const [productsLoading, setProductsLoading] = useState(true);
     const [editingProduct, setEditingProduct] = useState<Product | undefined>();
     const [section, setSection] = useState('Products');
+    const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [category, setCategory] = useState('All');
     const [availability, setAvailability] = useState('All');
@@ -37,13 +59,16 @@ export default function DashboardPortal() {
     const [isPending, startTransition] = useTransition();
     const { notify, confirm } = useToast();
     const router = useRouter();
+    const { brand } = useBranding();
     useEffect(() => {
         let active = true;
-        Promise.all([getProductsAction(), getMarketplaceStatsAction(), getMusicTracksAction()]).then(([products, stats, tracks]) => {
+        Promise.all([getProductsAction(), getMarketplaceStatsAction(), getMusicTracksAction(), getBannerSettingsAction(), getOwnerAboutAction()]).then(([products, stats, tracks, banners, about]) => {
             if (active) {
                 setAllProducts(products);
                 setMarketplace(stats);
                 setMusicTracks(tracks);
+                setBannerSettings(banners);
+                setOwnerAbout(about);
             }
         }).catch(error => {
             console.error('Could not load products', error);
@@ -54,6 +79,21 @@ export default function DashboardPortal() {
         });
         return () => { active = false; };
     }, [notify]);
+    useEffect(() => {
+        let active = true;
+        const refreshInboxCount = () => {
+            void getAdminCustomerContentCountAction().then(count => {
+                if (active)
+                    setInboxCount(count);
+            }).catch(error => console.error('Could not refresh customer inbox count', error));
+        };
+        refreshInboxCount();
+        const interval = window.setInterval(refreshInboxCount, 30000);
+        return () => {
+            active = false;
+            window.clearInterval(interval);
+        };
+    }, []);
     const filteredProducts = useMemo(() => allProducts, [allProducts]);
     const categories = useMemo(() => Array.from(new Set(filteredProducts.map(p => p.category).filter(Boolean))).sort(), [filteredProducts]);
     const searchedProducts = useMemo(() => {
@@ -104,27 +144,58 @@ export default function DashboardPortal() {
     };
     const giveawayCount = filteredProducts.filter(p => p.giveaway).length;
     const totalAvailable = filteredProducts.reduce((sum, p) => sum + (p.available_quantity || 0), 0);
+    const selectSection = (item: string) => {
+        setSection(item);
+        setPage(1);
+        setMobileMenuOpen(false);
+    };
+    const logout = async () => {
+        await logoutAction();
+        router.push('/admin/login');
+        router.refresh();
+    };
     return (<div className="h-screen overflow-hidden bg-slate-50 text-slate-900">
       <div className="flex h-screen min-h-0">
         <aside className="hidden h-screen w-64 shrink-0 border-r border-slate-200 bg-slate-950 p-5 text-white md:flex md:flex-col">
-          <div className="mb-8 shrink-0"><p className="text-2xl font-black">fussion<span className="text-violet-400">.</span></p><p className="mt-1 text-xs text-slate-400">Admin control panel</p></div>
-          <nav className="space-y-1 overflow-y-auto pr-1">{nav.map(item => <button key={item} onClick={() => { setSection(item); setPage(1); }} className={`w-full rounded-xl px-4 py-3 text-left text-sm font-semibold ${section === item ? 'bg-violet-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>{item}</button>)}</nav>
+          <div className="mb-8 shrink-0"><div className="flex items-center gap-2">{brand.logo && <img src={brand.logo} alt="" className="h-9 w-9 rounded-lg bg-white object-contain"/>}<p className="text-2xl font-black">{brand.companyName}<span className="text-violet-400">.</span></p></div><p className="mt-1 text-xs text-slate-400">Admin control panel</p></div>
+          <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1" aria-label="Admin dashboard navigation">{navGroups.map(group => <div key={group.label}><p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[.18em] text-slate-500">{group.label}</p><div className="space-y-1">{group.items.map(item => <button key={item} onClick={() => selectSection(item)} aria-current={section === item ? 'page' : undefined} className={`w-full rounded-xl px-4 py-2.5 text-left text-sm font-semibold transition ${section === item ? 'bg-violet-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}><span className="flex items-center justify-between gap-2"><span>{item}</span>{item === 'Inbox' && inboxCount > 0 && <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black text-white">{inboxCount}</span>}</span></button>)}</div></div>)}</nav>
           <div className="mt-auto space-y-2">
             <Link href="/" className="block shrink-0 rounded-xl border border-slate-700 px-4 py-3 text-center text-sm font-semibold text-slate-300 hover:bg-slate-800">View storefront</Link>
-            <button type="button" onClick={async () => { await logoutAction(); router.push('/admin/login'); router.refresh(); }} className="block w-full rounded-xl border border-red-900/60 px-4 py-3 text-center text-sm font-semibold text-red-300 hover:bg-red-950">Log out</button>
+            <button type="button" onClick={logout} className="block w-full rounded-xl border border-red-900/60 px-4 py-3 text-center text-sm font-semibold text-red-300 hover:bg-red-950">Log out</button>
           </div>
         </aside>
 
         <main className="min-w-0 min-h-0 flex-1 overflow-y-auto">
-          <header className="sticky top-0 z-30 border-b border-slate-200 bg-slate-50/95 px-4 py-4 backdrop-blur sm:px-8 sm:py-5">
+          <header className="sticky top-0 z-40 border-b border-slate-200 bg-slate-50/95 px-4 py-4 backdrop-blur sm:px-8 sm:py-5">
             <div className="flex min-h-[72px] flex-wrap items-center justify-between gap-4">
-              <div><p className="text-xs font-bold uppercase tracking-[.2em] text-violet-600">Admin</p><h1 className="mt-1 text-3xl font-black">{section}</h1><p className="mt-1 text-sm text-slate-500">Manage products and storefront announcements. No private account data is displayed here.</p></div>
+              <div className="flex min-w-0 items-center gap-3">
+                <button type="button" onClick={() => setMobileMenuOpen(true)} aria-label="Open admin navigation" aria-expanded={mobileMenuOpen} className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm md:hidden">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5"><path strokeLinecap="round" d="M4 7h16M4 12h16M4 17h16"/></svg>
+                </button>
+                <div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[.2em] text-violet-600">Admin</p><h1 className="mt-1 text-2xl font-black sm:text-3xl">{section}</h1><p className="mt-1 hidden text-sm text-slate-500 sm:block">Manage products and storefront announcements. No private account data is displayed here.</p></div>
+              </div>
               <div className="flex items-center gap-2">
-                <Link href="/" className="rounded-xl bg-white px-4 py-2 text-sm font-bold shadow-sm ring-1 ring-slate-200">Storefront ↗</Link>
-                <button type="button" onClick={async () => { await logoutAction(); router.push('/admin/login'); router.refresh(); }} className="rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-bold text-red-600 shadow-sm hover:bg-red-50">Log out</button>
+                <Link href="/" className="hidden rounded-xl bg-white px-4 py-2 text-sm font-bold shadow-sm ring-1 ring-slate-200 sm:inline-flex">Storefront ↗</Link>
+                <button type="button" onClick={logout} className="hidden rounded-xl border border-red-200 bg-white px-4 py-2 text-sm font-bold text-red-600 shadow-sm hover:bg-red-50 sm:inline-flex">Log out</button>
               </div>
             </div>
           </header>
+          {mobileMenuOpen && <div className="fixed inset-0 z-50 bg-slate-950/50 md:hidden">
+            <aside role="dialog" aria-modal="true" aria-label="Admin navigation" className="relative z-10 flex h-full w-80 max-w-[85vw] flex-col bg-slate-950 p-5 text-white shadow-2xl">
+              <div className="mb-6 flex items-start justify-between gap-3">
+                <div><div className="flex items-center gap-2">{brand.logo && <img src={brand.logo} alt="" className="h-9 w-9 rounded-lg bg-white object-contain"/>}<p className="text-xl font-black">{brand.companyName}<span className="text-violet-400">.</span></p></div><p className="mt-1 text-xs text-slate-400">Admin control panel</p></div>
+                <button type="button" onClick={() => setMobileMenuOpen(false)} aria-label="Close admin navigation" className="rounded-lg p-2 text-slate-300 hover:bg-slate-800">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5"><path strokeLinecap="round" d="m6 6 12 12M18 6 6 18"/></svg>
+                </button>
+              </div>
+              <nav className="min-h-0 flex-1 space-y-5 overflow-y-auto pr-1" aria-label="Admin dashboard navigation">{navGroups.map(group => <div key={group.label}><p className="mb-2 px-3 text-[10px] font-bold uppercase tracking-[.18em] text-slate-500">{group.label}</p><div className="space-y-1">{group.items.map(item => <button key={item} onClick={() => selectSection(item)} aria-current={section === item ? 'page' : undefined} className={`w-full rounded-xl px-4 py-2.5 text-left text-sm font-semibold transition ${section === item ? 'bg-violet-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}><span className="flex items-center justify-between gap-2"><span>{item}</span>{item === 'Inbox' && inboxCount > 0 && <span className="rounded-full bg-rose-500 px-2 py-0.5 text-[10px] font-black text-white">{inboxCount}</span>}</span></button>)}</div></div>)}</nav>
+              <div className="mt-auto space-y-2 border-t border-slate-800 pt-4">
+                <Link href="/" onClick={() => setMobileMenuOpen(false)} className="block rounded-xl border border-slate-700 px-4 py-3 text-center text-sm font-semibold text-slate-300 hover:bg-slate-800">View storefront</Link>
+                <button type="button" onClick={logout} className="block w-full rounded-xl border border-red-900/60 px-4 py-3 text-center text-sm font-semibold text-red-300 hover:bg-red-950">Log out</button>
+              </div>
+            </aside>
+            <button type="button" aria-label="Close admin navigation" onClick={() => setMobileMenuOpen(false)} className="absolute inset-0 z-0 cursor-default"/>
+          </div>}
 
           <div className="p-4 sm:p-8">
             {section === 'Overview' && <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Stat title="Products" value={filteredProducts.length}/><Stat title="Available units" value={totalAvailable}/><Stat title="Giveaways" value={giveawayCount}/><Stat title="Completed sales" value={marketplace?.completedSales || 0}/><Stat title="Revenue" value={marketplace?.revenue || 0}/></div>}
@@ -134,9 +205,23 @@ export default function DashboardPortal() {
             {section === 'Analytics' && <AnalyticsSection products={allProducts}/>}
             {section === 'Reports' && <ReportsSection />}
 
-            {section === 'Giveaways' && <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><h2 className="font-black text-emerald-900">Giveaway announcements</h2><p className="mt-1 text-sm text-emerald-800">Toggle a product's giveaway flag from the product editor. The announcement is then shown on the storefront and product page.</p><div className="mt-4 grid gap-3">{filteredProducts.filter(p => p.giveaway).map(p => <div key={p.id} className="rounded-xl bg-white p-4 ring-1 ring-emerald-200"><p className="font-bold">{p.title}</p><p className="mt-1 text-sm text-slate-600">{p.giveaway_announcement || 'Giveaway item announced.'}</p></div>)}{!giveawayCount && <p className="text-sm text-emerald-700">No giveaway items announced yet.</p>}</div></div>}
+            {section === 'Giveaways' && <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-5"><h2 className="font-black text-emerald-900">Giveaway announcements</h2><p className="mt-1 text-sm text-emerald-800">Manage giveaway listings from the product editor. Shoppers see clickable announcements and a limited-time giveaway pop-up.</p><div className="mt-4 grid gap-3">{filteredProducts.filter(p => p.giveaway).map(p => <article key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white p-4 ring-1 ring-emerald-200"><div><p className="font-bold">{p.title}</p><p className="mt-1 text-sm text-slate-600">{p.giveaway_announcement || 'Giveaway item announced.'}</p></div><div className="flex gap-2"><Link href={`/product/${p.id}`} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:border-violet-400">View product</Link><button type="button" onClick={() => { setSection('Products'); setEditingProduct(p); }} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white hover:bg-violet-700">Edit</button></div></article>)}{!giveawayCount && <p className="text-sm text-emerald-700">No giveaway items announced yet.</p>}</div></div>}
 
             {section === 'Music' && <MusicManager initialTracks={musicTracks} />}
+
+            {section === 'Upgrade notice' && <UpgradeAnnouncementManager />}
+
+            {section === 'Backups' && <BackupManager />}
+
+            {section === 'Banners' && <BannerManager initialSettings={bannerSettings} />}
+
+            {section === 'Branding' && <BrandManager initialBrand={brand} />}
+
+            {section === 'About' && (ownerAbout ? <AboutManager initialProfile={ownerAbout} /> : <p className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-500">Loading About profile…</p>)}
+
+            {section === 'Inbox' && <CustomerInboxManager onInboxCountChange={setInboxCount} />}
+
+            {section === 'Security' && <AccountPasswordSecurity role="admin" />}
 
             {section === 'Products' && <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
               <section className="min-w-0 rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -164,7 +249,7 @@ export default function DashboardPortal() {
               </section>
 
               <div className="min-w-0 xl:sticky xl:top-28 xl:self-start">
-                <ProductForm key={editingProduct ? `${editingProduct.id}-${editingProduct.price}-${editingProduct.compare_at_price ?? "none"}` : "new-product"} currentVendorId="admin" isAdmin editProduct={editingProduct} products={filteredProducts} onSuccess={refresh}/>
+                <ProductForm key={editingProduct ? `${editingProduct.id}-${editingProduct.price}-${editingProduct.compare_at_price ?? "none"}` : "new-product"} currentVendorId="admin" isAdmin editProduct={editingProduct} products={filteredProducts} onSuccess={refresh} onCancel={() => setEditingProduct(undefined)}/>
               </div>
             </div>}
           </div>
@@ -173,6 +258,7 @@ export default function DashboardPortal() {
     </div>);
 }
 function VendorSection() {
+    const { brand } = useBranding();
     const [requests, setRequests] = useState<any[]>([]);
     const [vendors, setVendors] = useState<any[]>([]);
     const [applicationId, setApplicationId] = useState('');
@@ -199,7 +285,7 @@ function VendorSection() {
     const pending = requests.filter(r => r.status === 'pending');
     return <div className="space-y-4">
     <div className="rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-black">Vendor verification WhatsApp</h2><p className="mt-1 max-w-2xl text-sm text-slate-500">Set the official Fussion admin WhatsApp number. After registration, vendors will be offered a pre-filled message containing their application details so you can verify them before approving or rejecting the application.</p></div><span className={`rounded-full px-3 py-1 text-xs font-bold ${adminWhatsApp ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{adminWhatsApp ? 'Configured' : 'Not configured'}</span></div>
+      <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-black">Vendor verification WhatsApp</h2><p className="mt-1 max-w-2xl text-sm text-slate-500">Set the official {brand.companyName} admin WhatsApp number. After registration, vendors will be offered a pre-filled message containing their application details so you can verify them before approving or rejecting the application.</p></div><span className={`rounded-full px-3 py-1 text-xs font-bold ${adminWhatsApp ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{adminWhatsApp ? 'Configured' : 'Not configured'}</span></div>
       <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]"><label className="text-sm font-semibold text-slate-700">Admin WhatsApp number (include country code)<input value={adminWhatsApp} onChange={e => setAdminWhatsApp(e.target.value)} placeholder="2348012345678" inputMode="tel" className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3 outline-none focus:border-emerald-500"/><span className="mt-1 block text-xs font-normal text-slate-400">Digits only is recommended. Example for Nigeria: 2348012345678.</span></label><button type="button" disabled={savingWhatsApp} onClick={saveWhatsApp} className="self-end rounded-xl bg-emerald-600 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">{savingWhatsApp ? 'Saving…' : 'Save WhatsApp'}</button></div>
       {whatsAppMessage && <p role="status" className="mt-3 text-sm font-semibold text-slate-700">{whatsAppMessage}</p>}
     </div>

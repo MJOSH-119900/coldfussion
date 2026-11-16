@@ -112,8 +112,16 @@
     "compare_at_price": 8989,
     "size_prices": [
       {
-        "size": "small= 400, medium= 800, large",
-        "price": 2000
+        "size": "S",
+        "price": 6000
+      },
+      {
+        "size": "M",
+        "price": 7000
+      },
+      {
+        "size": "L",
+        "price": 10000
       }
     ],
     "available_quantity": 10,

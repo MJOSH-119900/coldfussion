@@ -5,7 +5,7 @@ export interface Product {
     description: string;
     price: number;
     compare_at_price?: number;
-    size_prices?: { size: string; price: number; compare_at_price?: number }[];
+    size_prices?: { size: string; price: number; conventional_size?: string; compare_at_price?: number }[];
     giveaway?: boolean;
     giveaway_announcement?: string;
     available_quantity?: number;
@@ -23,6 +23,50 @@ export interface Product {
     is_top_selling?: boolean;
     related_products_mode?: 'category' | 'random' | 'manual';
     related_product_ids?: string[];
+}
+export type BannerIntervalUnit = 'seconds' | 'hours' | 'days';
+export interface BannerSlide {
+    id: string;
+    title: string;
+    description: string;
+    image: string;
+    button_label: string;
+    button_url: string;
+}
+export interface BannerSettings {
+    slides: BannerSlide[];
+    intervalValue: number;
+    intervalUnit: BannerIntervalUnit;
+}
+export interface BrandSettings {
+    companyName: string;
+    logo: string;
+}
+export interface OwnerAbout {
+    name: string;
+    title: string;
+    story: string;
+    hobbies: string[];
+    image: string;
+    isDemo?: boolean;
+}
+export interface CustomerInquiry {
+    id: string;
+    whatsapp: string;
+    category: 'general' | 'product' | 'delivery' | 'report_vendor' | 'other';
+    message: string;
+    created_at: string;
+    status: 'new' | 'read';
+}
+export interface ProductFeedback {
+    id: string;
+    product_id: string;
+    product_title: string;
+    name: string;
+    rating: number;
+    message: string;
+    created_at: string;
+    status: 'pending' | 'approved' | 'rejected';
 }
 export interface CartItem extends Product {
     quantity: number;

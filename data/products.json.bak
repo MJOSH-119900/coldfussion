@@ -102,5 +102,43 @@
     "giveaway": false,
     "giveaway_announcement": "",
     "compare_at_price": null
+  },
+  {
+    "id": "prod-1794843177700",
+    "vendor_id": "VEN0001",
+    "title": "Watch",
+    "description": "terrtertretertretete",
+    "price": 3000,
+    "compare_at_price": 8989,
+    "size_prices": [
+      {
+        "size": "small= 400, medium= 800, large",
+        "price": 2000
+      }
+    ],
+    "available_quantity": 10,
+    "is_available": true,
+    "giveaway": false,
+    "images": [
+      "/uploads/VEN0001-1794843177687-2p9ijg.png",
+      "/uploads/VEN0001-1794843177691-tl2yly.png",
+      "/uploads/VEN0001-1794843177694-2rbdxr.png",
+      "/uploads/VEN0001-1794843177697-5piyt1.png"
+    ],
+    "category": "wears",
+    "tags": [
+      "audio",
+      "gadgets",
+      "wireless"
+    ],
+    "likes_count": 0,
+    "vendor_whatsapp": "",
+    "location": "Minna",
+    "condition": "new",
+    "detail_gallery_enabled": true,
+    "is_latest": true,
+    "is_top_selling": false,
+    "related_products_mode": "random",
+    "related_product_ids": []
   }
 ]

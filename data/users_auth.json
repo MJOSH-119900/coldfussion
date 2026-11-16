@@ -3,9 +3,12 @@
     "role": "admin",
     "username_encrypted": "vK0nhS9AV9A7cufp.OF30WNtvQ4rBGYFTE-67CQ.dwfWEJ8",
     "username_hash": "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918",
-    "password": "scrypt:a6b1ad623c24bfb9268323abfe6b50ac:59f34fb51b95eb9077ad647b8674e540eac20321a3886f23de41f24ca351e250e9283aaf1cda136c9b52c5d49d4260c12aed9d676c03eaa091e1d1f74f260fa8",
+    "password": "scrypt:3191cd47a24165381bd9181a50c18a51:33024569dedda0102c4b51c36512f2d5d29ed7be40854fad0029e28ea9d44471d5f7137cbcbf4d4ea61321ec0731b49fa5e901e67d2912b30574a587c50f08a7",
     "status": "active",
-    "created_at": "2026-11-16T15:24:35.019Z"
+    "created_at": "2026-11-16T15:24:35.019Z",
+    "session_version": 1,
+    "recovery_email_encrypted": "D62dYqoQaCMycXZJ.G4s-H50W8Mw37m2SmXBB6Q.03A8knifdxFMwnb2x-Twf3rS2q8",
+    "recovery_email_hash": "68cbd508cdae295f37e9aa529963908dc8887c19421180d2f05ccdc7592a802f"
   },
   "store@mail.com": {
     "role": "vendor",

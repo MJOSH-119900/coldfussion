@@ -3,6 +3,7 @@
 import { usePathname } from 'next/navigation';
 import PublicNav from './PublicNav';
 import BackgroundMusicPlayer from './BackgroundMusicPlayer';
+import UpgradeAnnouncement from './UpgradeAnnouncement';
 
 /**
  * Lives in the root layout so its audio element is not destroyed when shoppers
@@ -15,12 +16,15 @@ export default function StorefrontShell() {
     const isStorefront = pathname === '/' ||
         pathname.startsWith('/product/') ||
         (pathname.startsWith('/vendor/') && !pathname.startsWith('/vendor/dashboard') && !pathname.startsWith('/vendor/login')) ||
+        pathname === '/about' ||
+        pathname === '/faq' ||
         pathname === '/wishlist' ||
         pathname === '/cart' ||
         pathname === '/checkout';
 
     return (
         <>
+            {isStorefront && <UpgradeAnnouncement />}
             {isStorefront && <PublicNav />}
             <BackgroundMusicPlayer visible={isStorefront} />
         </>

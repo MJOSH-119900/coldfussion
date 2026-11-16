@@ -6,6 +6,6 @@ export async function adminLoginAction(username: string, password: string) {
     if (!user || user.status !== 'active' || user.role !== 'admin' || !(await verifyPassword(password, user.password))) {
         return { success: false, error: 'Invalid admin username or password.' };
     }
-    await createSession({ role: 'admin', email: normalized });
+    await createSession({ role: 'admin', email: normalized, authVersion: Number(user.session_version || 0) });
     return { success: true };
 }

@@ -6,8 +6,28 @@ import { getSession, requireAdmin, hashPassword, hashLookup } from '../../../lib
 import { nextId, readJson, updateJson, writeJson } from '../../../lib/json-store';
 import { Product } from '../../(public)/components/types/store';
 import { deleteMusicTrack, getMusicTracks, getMusicSettings, saveMusicTrack, setMusicEnabled } from '../../../lib/music';
+import { getBannerSettings, removeBanner, saveBanner, saveBannerInterval } from '../../../lib/banners';
+import type { BannerIntervalUnit, BannerSettings } from '../../(public)/components/types/store';
+import { getBrandSettings, saveBrandSettings } from '../../../lib/branding';
+import { getOwnerAbout, saveOwnerAbout } from '../../../lib/about';
+import { getAdminCustomerContent, getAdminCustomerContentCount, markCustomerInquiryRead, moderateProductFeedback, removeProductFeedback } from '../../../lib/customer-content';
+import { checkPasswordAgainstBreaches } from '../../../lib/password-security';
+import { getUpgradeAnnouncement, saveUpgradeAnnouncement } from '../../../lib/announcements';
 const UPLOAD_DIR = path.resolve('./public/uploads');
 const validEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+export async function getUpgradeAnnouncementAction() {
+    await requireAdmin();
+    return getUpgradeAnnouncement();
+}
+export async function saveUpgradeAnnouncementAction(title: string, message: string, enabled: boolean) {
+    await requireAdmin();
+    try {
+        return { success: true, announcement: await saveUpgradeAnnouncement(title, message, enabled) };
+    }
+    catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not save the announcement.' };
+    }
+}
 export async function getProductsAction() { await requireAdmin(); return readJson<Product[]>('products.json', []); }
 export async function saveProductAction(formData: FormData, vendorId: string, productId?: string) {
     const session = await getSession();
@@ -48,17 +68,43 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
     const price = Number(formData.get('price') || 0);
     if (!Number.isFinite(price) || price < 0) return { success: false, error: 'Enter a valid product price.' };
     const compareRaw = String(formData.get('compare_at_price') ?? '').trim();
-    const compare = compareRaw && Number(compareRaw) > price ? Number(compareRaw) : undefined;
     const owner = existing?.vendor_id || (session.role === 'admin' ? vendorId : session.vendorId);
     if (!owner) return { success: false, error: 'Vendor account is not linked to a valid vendor profile.' };
     const sizePricesText = String(formData.get('size_prices_text') || '');
     const sizeLines = sizePricesText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const size_prices = sizeLines.map(line => {
-        const match = line.match(/^(.+?)\s*(?:=|:)\s*([0-9]+(?:\.[0-9]{1,2})?)\s*$/);
-        return match ? { size: match[1].trim(), price: Number(match[2]) } : null;
-    }).filter((v): v is { size: string; price: number } => Boolean(v && v.size && Number.isFinite(v.price) && v.price >= 0));
-    if (sizeLines.length && (size_prices.length !== sizeLines.length || size_prices.length > 20)) return { success: false, error: 'Check size pricing: use one valid “Size = Price” entry per line, with no more than 20 sizes.' };
+        const priceParts = line.split(';');
+        if (priceParts.length > 2)
+            return null;
+        const sizeParts = priceParts[0].split('|');
+        if (sizeParts.length > 2)
+            return null;
+        const match = sizeParts[0].trim().match(/^(.+?)\s*(?:=|:)\s*([0-9]+(?:\.[0-9]{1,2})?)\s*$/);
+        const size = match?.[1].trim();
+        const conventionalSize = sizeParts[1]?.trim();
+        const sizeCompareRaw = priceParts[1]?.trim();
+        const sizeCompare = sizeCompareRaw ? Number(sizeCompareRaw) : undefined;
+        const currentSizePrice = match ? Number(match[2]) : NaN;
+        if (!match || !size || size.length > 50 ||
+            (sizeParts.length === 2 && (!conventionalSize || conventionalSize.length > 30)) ||
+            (priceParts.length === 2 && (!sizeCompareRaw || sizeCompare === undefined || !Number.isFinite(sizeCompare) || sizeCompare <= currentSizePrice)))
+            return null;
+        return {
+            size,
+            price: currentSizePrice,
+            ...(conventionalSize ? { conventional_size: conventionalSize } : {}),
+            ...(sizeCompare !== undefined ? { compare_at_price: sizeCompare } : {}),
+        };
+    }).filter((v): v is { size: string; price: number; conventional_size?: string; compare_at_price?: number } => Boolean(v && Number.isFinite(v.price) && v.price >= 0));
+    if (sizeLines.length && (size_prices.length !== sizeLines.length || size_prices.length > 20)) return { success: false, error: 'Check size pricing. Use “Size = Price”, optionally followed by “| Equivalent” and “; Previous price”. Each previous price must be greater than its size price, with no more than 20 sizes.' };
     if (new Set(size_prices.map(v => v.size.toLowerCase())).size !== size_prices.length) return { success: false, error: 'Each size can only be listed once.' };
+    const compare = compareRaw ? Number(compareRaw) : undefined;
+    const sizesUsingMainCompare = size_prices.filter(v => v.compare_at_price === undefined);
+    const highestPriceUsingMainCompare = sizesUsingMainCompare.length
+        ? Math.max(...sizesUsingMainCompare.map(v => v.price))
+        : price;
+    if (compareRaw && (compare === undefined || !Number.isFinite(compare) || compare <= highestPriceUsingMainCompare))
+        return { success: false, error: 'The main previous price must be higher than every current size price without an individual previous price.' };
     const isAdmin = session.role === 'admin';
     const product: Product = { id: existing?.id || `prod-${Date.now()}`, vendor_id: owner, title: String(formData.get('title') || '').trim(), description: String(formData.get('description') || '').trim(), price, compare_at_price: compare, size_prices: size_prices.length ? size_prices : undefined, available_quantity: Math.max(0, Number(formData.get('available_quantity') || 0)), is_available: formData.get('is_available') === 'true' && Number(formData.get('available_quantity') || 0) > 0, giveaway: formData.get('giveaway') === 'true', giveaway_announcement: String(formData.get('giveaway_announcement') || '').trim() || undefined, images: (uploadedImages.length ? uploadedImages : existing?.images || []).slice(0, 7), category: String(formData.get('category') || 'Other').trim(), tags: String(formData.get('tags') || '').split(',').map(s => s.trim()).filter(Boolean), likes_count: existing?.likes_count || 0, vendor_whatsapp: String(formData.get('vendor_whatsapp') || '').trim(), location: String(formData.get('location') || '').trim(), condition: (String(formData.get('condition') || 'new') as Product['condition']), detail_gallery_enabled: formData.get('detail_gallery_enabled') === 'true', is_latest: formData.get('is_latest') === 'true', is_top_selling: isAdmin ? formData.get('is_top_selling') === 'true' : existing?.is_top_selling || false, related_products_mode: (String(formData.get('related_products_mode') || 'category') as Product['related_products_mode']), related_product_ids: formData.getAll('related_product_ids').map(String).filter(Boolean).slice(0, 4) };
     await writeJson('products.json', productId ? products.map(p => p.id === productId ? product : p) : [...products, product]);
@@ -132,6 +178,11 @@ export async function registerVendorAction(data: FormData) {
         return { success: false, error: 'Passwords do not match.' };
     if (!validEmail(email) || password.length < 10)
         return { success: false, error: 'Use a valid email and a password of at least 10 characters.' };
+    const breachStatus = await checkPasswordAgainstBreaches(password);
+    if (breachStatus === 'breached')
+        return { success: false, error: 'This password appears in known data breaches. Choose a different password.' };
+    if (breachStatus === 'unavailable')
+        return { success: false, error: 'Could not check the password against breach data. Try again shortly.' };
     const vendors = await readJson<any[]>('vendors.json', []);
     const requests = await readJson<any[]>('vendor_requests.json', []);
     const users = await readJson<Record<string, any>>('users_auth.json', {});
@@ -168,7 +219,7 @@ export async function saveAdminWhatsAppAction(phone: string) {
     if (normalized && (normalized.length < 10 || normalized.length > 15)) {
         return { success: false, error: 'Enter the WhatsApp number with country code, using 10 to 15 digits. Example: 2348012345678.' };
     }
-    await writeJson('site_settings.json', { ...(await readJson<Record<string, unknown>>('site_settings.json', {})), admin_whatsapp: normalized });
+    await updateJson<Record<string, unknown>>('site_settings.json', current => ({ ...current, admin_whatsapp: normalized }), {});
     revalidatePath('/admin');
     revalidatePath('/vendor/register');
     return { success: true, phone: normalized };
@@ -235,5 +286,141 @@ export async function deleteMusicTrackAction(trackId: string) {
             success: false,
             error: error instanceof Error ? error.message : 'Could not remove the song.',
         };
+    }
+}
+
+export async function getBannerSettingsAction(): Promise<BannerSettings> {
+    await requireAdmin();
+    return getBannerSettings();
+}
+
+export async function saveBannerAction(formData: FormData) {
+    await requireAdmin();
+    try {
+        const file = formData.get('image_file');
+        const slide = await saveBanner({
+            id: String(formData.get('id') || '').trim() || undefined,
+            title: String(formData.get('title') || ''),
+            description: String(formData.get('description') || ''),
+            button_label: String(formData.get('button_label') || ''),
+            button_url: String(formData.get('button_url') || ''),
+            file: file instanceof File ? file : undefined,
+        });
+        revalidatePath('/');
+        revalidatePath('/admin');
+        return { success: true, slide };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not save the banner.' };
+    }
+}
+
+export async function deleteBannerAction(id: string) {
+    await requireAdmin();
+    try {
+        await removeBanner(id);
+        revalidatePath('/');
+        revalidatePath('/admin');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not delete the banner.' };
+    }
+}
+
+export async function saveBannerIntervalAction(value: number, unit: BannerIntervalUnit) {
+    await requireAdmin();
+    try {
+        const settings = await saveBannerInterval(value, unit);
+        revalidatePath('/');
+        revalidatePath('/admin');
+        return { success: true, settings };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not update the carousel interval.' };
+    }
+}
+
+export async function saveBrandSettingsAction(formData: FormData) {
+    await requireAdmin();
+    try {
+        const file = formData.get('logo_file');
+        const brand = await saveBrandSettings(
+            String(formData.get('company_name') || ''),
+            file instanceof File ? file : undefined,
+            formData.get('remove_logo') === 'true',
+        );
+        revalidatePath('/', 'layout');
+        return { success: true, brand };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not save company branding.' };
+    }
+}
+
+export async function getOwnerAboutAction() {
+    await requireAdmin();
+    return getOwnerAbout();
+}
+
+export async function saveOwnerAboutAction(formData: FormData) {
+    await requireAdmin();
+    try {
+        const profile = await saveOwnerAbout(formData);
+        revalidatePath('/');
+        revalidatePath('/about');
+        revalidatePath('/admin');
+        return { success: true, profile };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not save your About profile.' };
+    }
+}
+
+export async function getAdminCustomerContentAction() {
+    await requireAdmin();
+    return getAdminCustomerContent();
+}
+
+export async function getAdminCustomerContentCountAction() {
+    await requireAdmin();
+    return getAdminCustomerContentCount();
+}
+
+export async function markCustomerInquiryReadAction(id: string) {
+    await requireAdmin();
+    try {
+        const updated = await markCustomerInquiryRead(String(id || ''));
+        if (!updated)
+            return { success: false, error: 'Enquiry not found.' };
+        revalidatePath('/admin');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not update the enquiry.' };
+    }
+}
+
+export async function moderateProductFeedbackAction(id: string, status: 'approved' | 'rejected') {
+    await requireAdmin();
+    if (status !== 'approved' && status !== 'rejected')
+        return { success: false, error: 'Choose a valid moderation status.' };
+    try {
+        const updated = await moderateProductFeedback(String(id || ''), status);
+        if (!updated)
+            return { success: false, error: 'Product feedback not found.' };
+        revalidatePath('/admin');
+        revalidatePath('/product/[id]', 'page');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not moderate product feedback.' };
+    }
+}
+
+export async function deleteProductFeedbackAction(id: string) {
+    await requireAdmin();
+    try {
+        const removed = await removeProductFeedback(String(id || ''));
+        if (!removed)
+            return { success: false, error: 'Product feedback not found.' };
+        revalidatePath('/admin');
+        revalidatePath('/product/[id]', 'page');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Could not delete product feedback.' };
     }
 }

@@ -3,10 +3,11 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 const DATA_DIR = path.resolve(/* turbopackIgnore: true */ process.env.FUSSION_DATA_DIR || './data');
 const LOCK_DIR = path.join(DATA_DIR, '.locks');
-export type JsonFileName = 'vendors.json' | 'vendor_requests.json' | 'products.json' | 'users_auth.json' | 'orders.json' | 'analytics.json' | 'counters.json' | 'likes.json' | 'auth_otps.json' | 'music.json' | 'music_settings.json' | 'site_settings.json';
+export type JsonFileName = 'vendors.json' | 'vendor_requests.json' | 'products.json' | 'users_auth.json' | 'orders.json' | 'analytics.json' | 'counters.json' | 'likes.json' | 'auth_otps.json' | 'music.json' | 'music_settings.json' | 'site_settings.json' | 'customer_inquiries.json' | 'product_feedback.json';
 const defaults: Record<JsonFileName, unknown> = {
     'vendors.json': [], 'vendor_requests.json': [], 'products.json': [], 'users_auth.json': {},
-    'orders.json': [], 'analytics.json': [], 'counters.json': {}, 'likes.json': [], 'auth_otps.json': [], 'music.json': [], 'music_settings.json': { enabled: true, updated_at: null }, 'site_settings.json': { admin_whatsapp: '' }
+    'orders.json': [], 'analytics.json': [], 'counters.json': {}, 'likes.json': [], 'auth_otps.json': [], 'music.json': [], 'music_settings.json': { enabled: true, updated_at: null }, 'site_settings.json': { admin_whatsapp: '' },
+    'customer_inquiries.json': [], 'product_feedback.json': []
 };
 async function ensureDir() { await fs.mkdir(DATA_DIR, { recursive: true }); await fs.mkdir(LOCK_DIR, { recursive: true }); }
 async function migrateFile(name: JsonFileName) {
@@ -32,6 +33,7 @@ export async function readJson<T>(name: JsonFileName, fallback?: T): Promise<T> 
     }
 }
 async function acquireLock(name: JsonFileName) {
+    await ensureDir();
     const lock = path.join(LOCK_DIR, `${name}.lock`);
     for (let i = 0; i < 50; i++) {
         try {

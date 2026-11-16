@@ -1,16 +1,24 @@
 import { cookies } from 'next/headers';
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scrypt as nodeScrypt, timingSafeEqual, } from 'crypto';
 import { promisify } from 'util';
-import { readJson, updateJson, DATA_DIR } from './json-store';
+import { readJson, DATA_DIR } from './json-store';
 import fs from 'fs/promises';
 import path from 'path';
 const scrypt = promisify(nodeScrypt);
 const COOKIE = 'fussion_session';
-const SESSION_SECRET = process.env.FUSSION_SESSION_SECRET || 'change-this-in-production-fussion-session-secret';
+const LEGACY_SESSION_SECRET = 'change-this-in-production-fussion-session-secret';
+const configuredSessionSecret = process.env.FUSSION_SESSION_SECRET?.trim();
+if (process.env.NODE_ENV === 'production' &&
+    (!configuredSessionSecret || Buffer.byteLength(configuredSessionSecret, 'utf8') < 32 ||
+        configuredSessionSecret === LEGACY_SESSION_SECRET)) {
+    throw new Error('Production requires a strong FUSSION_SESSION_SECRET of at least 32 bytes.');
+}
+const SESSION_SECRET = configuredSessionSecret || randomBytes(32).toString('base64url');
 type Session = {
     role: 'admin' | 'vendor';
     vendorId?: string;
     email: string;
+    authVersion?: number;
     exp: number;
 };
 type AdminAuth = {
@@ -22,6 +30,15 @@ type AdminAuth = {
     password: string;
     status: 'active' | 'disabled';
     created_at: string;
+};
+type AuthRecord = {
+    role?: string;
+    username_hash?: string;
+    status?: string;
+    password: string;
+    vendor_id?: string;
+    session_version?: number;
+    [key: string]: unknown;
 };
 async function encryptionKey() {
     const configured = process.env.FUSSION_AUTH_ENCRYPTION_KEY || process.env.FUSSION_SESSION_SECRET;
@@ -102,9 +119,9 @@ function decode(value: string): Session | null {
         return null;
     }
 }
-export async function createSession(session: Omit<Session, 'exp'>) {
+export async function createSession(session: Omit<Session, 'exp' | 'authVersion'> & { authVersion?: number }) {
     const store = await cookies();
-    store.set(COOKIE, encode({ ...session, exp: Date.now() + 1000 * 60 * 60 * 12 }), {
+    store.set(COOKIE, encode({ ...session, authVersion: session.authVersion || 0, exp: Date.now() + 1000 * 60 * 60 * 12 }), {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'lax',
@@ -118,7 +135,25 @@ export async function getSession(): Promise<Session | null> {
     // render it inside Suspense when cacheComponents is enabled.
     const store = await cookies();
     const raw = store.get(COOKIE)?.value;
-    return raw ? decode(raw) : null;
+    const session = raw ? decode(raw) : null;
+    if (!session)
+        return null;
+    const users = await readJson<Record<string, AuthRecord>>('users_auth.json', {});
+    if (session.role === 'admin') {
+        const usernameHash = hashLookup(session.email);
+        const user = Object.values(users).find(entry => entry.role === 'admin' && entry.username_hash === usernameHash);
+        if (!user) {
+            const envUsername = (process.env.FUSSION_ADMIN_USERNAME || '').trim().toLowerCase();
+            return envUsername && envUsername === session.email ? session : null;
+        }
+        return user.status === 'active' && Number(user.session_version || 0) === Number(session.authVersion || 0) ? session : null;
+    }
+    const normalizedEmail = normalizeEmail(session.email);
+    const user = users[hashLookup(normalizedEmail)] || users[normalizedEmail] ||
+        Object.values(users).find(entry => entry.role === 'vendor' && entry.vendor_id === session.vendorId);
+    return user?.role === 'vendor' && user?.status === 'active' &&
+        user.vendor_id === session.vendorId &&
+        Number(user.session_version || 0) === Number(session.authVersion || 0) ? session : null;
 }
 export async function requireRole(role: 'admin' | 'vendor') { const session = await getSession(); if (!session || session.role !== role)
     throw new Error('Unauthorized'); return session; }
@@ -131,21 +166,21 @@ export async function findAuthByUsername(username: string) {
     const normalized = username.trim().toLowerCase();
     if (!normalized)
         return undefined;
-    const users = await readJson<Record<string, any>>('users_auth.json', {});
+    const users = await readJson<Record<string, AuthRecord>>('users_auth.json', {});
     const usernameHash = hashLookup(normalized);
-    const registered = Object.values(users).find((user: any) => user?.role === 'admin' && user?.status === 'active' && user?.username_hash === usernameHash);
+    const registered = Object.values(users).find(user => user.role === 'admin' && user.status === 'active' && user.username_hash === usernameHash);
     if (registered)
         return { ...registered, username: normalized };
     const envUsername = (process.env.FUSSION_ADMIN_USERNAME || '').trim().toLowerCase();
     const envPassword = process.env.FUSSION_ADMIN_PASSWORD;
     if (envUsername && normalized === envUsername && envPassword) {
-        return { role: 'admin', vendor_id: undefined, password: await hashPassword(envPassword), status: 'active', username: normalized };
+        return { role: 'admin', vendor_id: undefined, password: await hashPassword(envPassword), status: 'active', username: normalized, session_version: 0 };
     }
     return undefined;
 }
 export async function findAuthByEmail(email: string) {
     const normalized = normalizeEmail(email);
-    const users = await readJson<Record<string, any>>('users_auth.json', {});
+    const users = await readJson<Record<string, AuthRecord>>('users_auth.json', {});
     const hashed = users[hashLookup(normalized)];
     if (hashed)
         return { ...hashed, email: normalized };
@@ -155,18 +190,18 @@ export async function findAuthByEmail(email: string) {
     const envEmail = normalizeEmail(process.env.FUSSION_ADMIN_EMAIL || '');
     const envPassword = process.env.FUSSION_ADMIN_PASSWORD;
     if (normalized === envEmail && envPassword) {
-        return { role: 'admin', vendor_id: undefined, password: await hashPassword(envPassword), status: 'active', email: normalized };
+        return { role: 'admin', vendor_id: undefined, password: await hashPassword(envPassword), status: 'active', email: normalized, session_version: 0 };
     }
     return undefined;
 }
 export async function getAdminAuthByEmail(email: string): Promise<AdminAuth | undefined> {
-    const users = await readJson<Record<string, any>>('users_auth.json', {});
+    const users = await readJson<Record<string, AuthRecord>>('users_auth.json', {});
     const value = users[hashLookup(normalizeEmail(email))];
     return value?.role === 'admin' ? value as AdminAuth : undefined;
 }
 export async function hasRegisteredAdmin() {
-    const users = await readJson<Record<string, any>>('users_auth.json', {});
-    if (Object.values(users).some(user => user?.role === 'admin' && user?.status === 'active'))
+    const users = await readJson<Record<string, AuthRecord>>('users_auth.json', {});
+    if (Object.values(users).some(user => user.role === 'admin' && user.status === 'active'))
         return true;
     return Boolean(process.env.FUSSION_ADMIN_USERNAME && process.env.FUSSION_ADMIN_PASSWORD);
 }

@@ -6,5 +6,12 @@
     "password": "scrypt:a6b1ad623c24bfb9268323abfe6b50ac:59f34fb51b95eb9077ad647b8674e540eac20321a3886f23de41f24ca351e250e9283aaf1cda136c9b52c5d49d4260c12aed9d676c03eaa091e1d1f74f260fa8",
     "status": "active",
     "created_at": "2026-11-16T15:24:35.019Z"
+  },
+  "store@mail.com": {
+    "role": "vendor",
+    "vendor_id": "VEN0001",
+    "password": "scrypt:d7e26db174885fcaf6c93730160c9a40:17fc4b86069a3ceee5b255b61fa6109d9f30b9c665886df400c9c3a6cdbe1b0939bb73545925d075ba6ba4ff7e1317cd9decf7f03701ae84dec5378fcc555718",
+    "status": "active",
+    "created_at": "2026-11-16T15:27:49.874Z"
   }
 }
