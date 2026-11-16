@@ -1,0 +1,17 @@
+[
+  {
+    "request_id": "VREQ0001",
+    "status": "approved",
+    "business_name": "Store One",
+    "owner_name": "T.L",
+    "email": "store@mail.com",
+    "whatsapp_number": "08168077767",
+    "business_address": "G.k",
+    "business_category": "Store One",
+    "business_description": "erer",
+    "logo": "/uploads/vendor-VREQ0001-1794842767450.png",
+    "created_at": "2026-11-16T15:26:07.453Z",
+    "vendor_id": "VEN0001",
+    "approved_at": "2026-11-16T15:27:49.884Z"
+  }
+]

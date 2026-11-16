@@ -1,0 +1,16 @@
+[
+  {
+    "request_id": "VREQ0001",
+    "status": "pending",
+    "business_name": "Store One",
+    "owner_name": "T.L",
+    "email": "store@mail.com",
+    "whatsapp_number": "08168077767",
+    "business_address": "G.k",
+    "business_category": "Spare part dealer",
+    "business_description": "Sell every form of spare part",
+    "logo": "",
+    "password_hash": "scrypt:4826115f48bfa17798a159e88d39418a:c13075543cf018924155b4c24fe70cf962348cfb2c569aa1af048f6bb90f1308af9410d67e27bf97678a3a373cc03edf659a9f6e1a381035abfc3194db775ccb",
+    "created_at": "2026-11-12T13:03:18.465Z"
+  }
+]

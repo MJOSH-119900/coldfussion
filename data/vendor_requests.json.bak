@@ -1,0 +1,16 @@
+[
+  {
+    "request_id": "VREQ0001",
+    "status": "pending",
+    "business_name": "Store One",
+    "owner_name": "T.L",
+    "email": "store@mail.com",
+    "whatsapp_number": "08168077767",
+    "business_address": "G.k",
+    "business_category": "Store One",
+    "business_description": "erer",
+    "logo": "/uploads/vendor-VREQ0001-1794842767450.png",
+    "password_hash": "scrypt:d7e26db174885fcaf6c93730160c9a40:17fc4b86069a3ceee5b255b61fa6109d9f30b9c665886df400c9c3a6cdbe1b0939bb73545925d075ba6ba4ff7e1317cd9decf7f03701ae84dec5378fcc555718",
+    "created_at": "2026-11-16T15:26:07.453Z"
+  }
+]

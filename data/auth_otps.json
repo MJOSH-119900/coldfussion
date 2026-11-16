@@ -1,0 +1,11 @@
+[
+  {
+    "otp_id": "otp_da10639821018a5ca23bedbc3a25f3403d9c",
+    "email_hash": "68cbd508cdae295f37e9aa529963908dc8887c19421180d2f05ccdc7592a802f",
+    "code_hash": "8fba88dabda23bd225cd886af590621c4c89171cc6afa267912476a014580b51",
+    "expires_at": 1794484989528,
+    "attempts": 0,
+    "sent_at": 1794484689528,
+    "used": false
+  }
+]
