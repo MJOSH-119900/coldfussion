@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
+    // Keep seed JSON available to the server functions that initialize /tmp.
+    outputFileTracingIncludes: {
+        '/*': ['./data/*.json'],
+    },
     experimental: {
         serverActions: { bodySizeLimit: "100mb" },
     },

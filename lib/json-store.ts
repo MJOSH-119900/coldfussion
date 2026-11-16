@@ -1,7 +1,11 @@
 import fs from 'fs/promises';
+import { constants } from 'fs';
 import path from 'path';
 import { randomUUID } from 'crypto';
-const DATA_DIR = path.resolve(/* turbopackIgnore: true */ process.env.FUSSION_DATA_DIR || './data');
+// Vercel functions can write only to /tmp. Use it for a preview-friendly,
+// per-instance copy while keeping the checked-in JSON files as read-only seeds.
+const DATA_DIR = path.resolve(/* turbopackIgnore: true */ process.env.FUSSION_DATA_DIR || (process.env.VERCEL === '1' ? '/tmp/fussion-data' : './data'));
+const SEED_DIR = path.resolve(/* turbopackIgnore: true */ './data');
 const LOCK_DIR = path.join(DATA_DIR, '.locks');
 export type JsonFileName = 'vendors.json' | 'vendor_requests.json' | 'products.json' | 'users_auth.json' | 'orders.json' | 'analytics.json' | 'counters.json' | 'likes.json' | 'auth_otps.json' | 'music.json' | 'music_settings.json' | 'site_settings.json' | 'customer_inquiries.json' | 'product_feedback.json';
 const defaults: Record<JsonFileName, unknown> = {
@@ -18,6 +22,15 @@ async function migrateFile(name: JsonFileName) {
         return;
     }
     catch { }
+    // Seed the temporary Vercel store with the deployed catalog and settings.
+    // Each invocation can then use the normal JSON API; changes are ephemeral.
+    try {
+        await fs.copyFile(path.join(SEED_DIR, name), target, constants.COPYFILE_EXCL);
+        return;
+    }
+    catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') return;
+    }
     const value = defaults[name];
     await atomicWrite(name, value, false);
 }

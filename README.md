@@ -69,7 +69,7 @@ npm run dev
 
 ## Important deployment note
 
-JSON storage requires persistent writable hosting. On serverless platforms with ephemeral filesystems, configure a persistent volume or move the storage adapter to SQLite/MySQL when the marketplace outgrows local JSON storage.
+For a Vercel preview, the JSON adapter copies the deployed `data/*.json` seed files into `/tmp/fussion-data` on first access. This allows the catalog and server actions to run without writing into the read-only deployment bundle. `/tmp` is temporary and scoped to a function instance: edits, orders, registrations, and other JSON changes can disappear on a cold start or be different across instances. This is preview behavior only, not durable production storage. Uploads under `public/uploads/` also require persistent writable storage. Move JSON and uploads to a database and object storage before relying on production writes.
 
 ## Vendor applications from the storefront
 
