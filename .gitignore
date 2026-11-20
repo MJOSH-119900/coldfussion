@@ -43,3 +43,5 @@ next-env.d.ts
 
 # Local auth secret generated when explicit auth encryption/session secrets are not supplied
 data/.auth-secret
+
+.vercel
