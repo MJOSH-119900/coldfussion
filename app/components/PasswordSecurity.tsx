@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { changePasswordAction, completePasswordResetAction, requestPasswordResetAction } from '../password-reset/actions';
 import { useToast } from './ToastProvider';
 import { useBranding } from '../(public)/components/BrandingProvider';
+import PasswordInput from './PasswordInput';
 
 function PasswordFlowShell({
     role,
@@ -103,7 +104,7 @@ export function PasswordResetRequestForm({ role }: { role: 'admin' | 'vendor' })
       role={role}
       eyebrow={isAdmin ? 'Administrator access' : 'Seller account'}
       headline="Let’s get you back in."
-      description="Request a secure, one-time password reset link sent to the recovery email on your account."
+      description="Request a secure password reset link sent to the email address on your account."
       backHref={isAdmin ? '/admin/login' : '/vendor/login'}
       backLabel="Back to sign in"
     >
@@ -122,7 +123,7 @@ export function PasswordResetRequestForm({ role }: { role: 'admin' | 'vendor' })
     </PasswordFlowShell>;
 }
 
-export function PasswordResetCompleteForm({ token }: { token: string }) {
+export function PasswordResetCompleteForm() {
     const [password, setPassword] = useState('');
     const [confirmation, setConfirmation] = useState('');
     const [message, setMessage] = useState('');
@@ -139,7 +140,7 @@ export function PasswordResetCompleteForm({ token }: { token: string }) {
         }
         setPending(true);
         try {
-            const result = await completePasswordResetAction(token, password);
+            const result = await completePasswordResetAction(password);
             if (!result.success) {
                 setError(result.error || 'Could not reset the password.');
                 return;
@@ -158,23 +159,23 @@ export function PasswordResetCompleteForm({ token }: { token: string }) {
       role="admin"
       eyebrow="Secure account recovery"
       headline="Choose a new password."
-      description="Your reset link expires after 30 minutes and can only be used once."
+      description="This secure link can only be used once. If it has expired, request a new one."
     >
       <form onSubmit={submit}>
         <p className="text-sm font-bold text-violet-700">Set a new password</p>
         <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950">Secure your account</h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">Choose a strong password with at least 12 characters.</p>
-        <label className="mt-8 block text-sm font-bold text-slate-700">
-          New password
-          <input required minLength={12} autoComplete="new-password" type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="At least 12 characters" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100"/>
-        </label>
-        <label className="mt-5 block text-sm font-bold text-slate-700">
-          Confirm new password
-          <input required minLength={12} autoComplete="new-password" type="password" value={confirmation} onChange={event => setConfirmation(event.target.value)} placeholder="Enter the password again" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100"/>
-        </label>
+        <div className="mt-8 text-sm font-bold text-slate-700">
+          <label htmlFor="reset-new-password">New password</label>
+          <PasswordInput id="reset-new-password" required minLength={12} autoComplete="new-password" value={password} onChange={event => setPassword(event.target.value)} placeholder="At least 12 characters" wrapperClassName="mt-2" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100" toggleClassName="text-violet-700 hover:text-violet-900 focus:ring-violet-300" />
+        </div>
+        <div className="mt-5 text-sm font-bold text-slate-700">
+          <label htmlFor="reset-new-password-confirm">Confirm new password</label>
+          <PasswordInput id="reset-new-password-confirm" required minLength={12} autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} placeholder="Enter the password again" wrapperClassName="mt-2" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100" toggleClassName="text-violet-700 hover:text-violet-900 focus:ring-violet-300" />
+        </div>
         {message && <div role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><p>{message}</p><div className="mt-3 flex flex-wrap gap-4"><Link className="font-bold text-violet-700" href="/admin/login">Admin sign in</Link><Link className="font-bold text-emerald-700" href="/vendor/login">Vendor sign in</Link></div></div>}
         {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
-        <button disabled={pending || !token} className="mt-6 w-full rounded-xl bg-violet-700 py-3.5 font-bold text-white shadow-lg shadow-violet-700/20 transition hover:bg-violet-800 focus:outline-none focus:ring-4 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{pending ? 'Updating…' : 'Update password'}</button>
+        <button disabled={pending} className="mt-6 w-full rounded-xl bg-violet-700 py-3.5 font-bold text-white shadow-lg shadow-violet-700/20 transition hover:bg-violet-800 focus:outline-none focus:ring-4 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{pending ? 'Updating…' : 'Update password'}</button>
       </form>
     </PasswordFlowShell>;
 }
@@ -183,7 +184,6 @@ export default function AccountPasswordSecurity({ role }: { role: 'admin' | 'ven
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmation, setConfirmation] = useState('');
-    const [recoveryEmail, setRecoveryEmail] = useState('');
     const [pending, setPending] = useState(false);
     const { notify } = useToast();
     const router = useRouter();
@@ -196,7 +196,7 @@ export default function AccountPasswordSecurity({ role }: { role: 'admin' | 'ven
         }
         setPending(true);
         try {
-            const result = await changePasswordAction(currentPassword, newPassword, recoveryEmail);
+            const result = await changePasswordAction(currentPassword, newPassword);
             if (!result.success) {
                 notify('error', result.error || 'Could not change your password.', 'Password change');
                 return;
@@ -217,10 +217,9 @@ export default function AccountPasswordSecurity({ role }: { role: 'admin' | 'ven
       <h2 className="text-xl font-black">Account security</h2>
       <p className="mt-1 text-sm text-slate-500">Changing your password signs out all active sessions.</p>
       <form onSubmit={submit} className="mt-5 space-y-3">
-        <label className="block text-sm font-semibold">Current password<input required type="password" autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} className="mt-1 w-full rounded-xl border px-3 py-3"/></label>
-        <label className="block text-sm font-semibold">New password<input required minLength={12} type="password" autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} className="mt-1 w-full rounded-xl border px-3 py-3"/></label>
-        <label className="block text-sm font-semibold">Confirm new password<input required minLength={12} type="password" autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} className="mt-1 w-full rounded-xl border px-3 py-3"/></label>
-        {role === 'admin' && <label className="block text-sm font-semibold">Admin recovery email<input type="email" autoComplete="email" value={recoveryEmail} onChange={event => setRecoveryEmail(event.target.value)} placeholder="Needed for email reset links" className="mt-1 w-full rounded-xl border px-3 py-3"/><span className="mt-1 block text-xs font-normal text-slate-500">Saving a recovery email requires your current password and updates it with this password change.</span></label>}
+        <div className="text-sm font-semibold"><label htmlFor="account-current-password">Current password</label><PasswordInput id="account-current-password" required autoComplete="current-password" value={currentPassword} onChange={event => setCurrentPassword(event.target.value)} wrapperClassName="mt-1" className="w-full rounded-xl border px-3 py-3" toggleClassName="text-slate-700 hover:text-slate-950 focus:ring-slate-300" /></div>
+        <div className="text-sm font-semibold"><label htmlFor="account-new-password">New password</label><PasswordInput id="account-new-password" required minLength={12} autoComplete="new-password" value={newPassword} onChange={event => setNewPassword(event.target.value)} wrapperClassName="mt-1" className="w-full rounded-xl border px-3 py-3" toggleClassName="text-slate-700 hover:text-slate-950 focus:ring-slate-300" /></div>
+        <div className="text-sm font-semibold"><label htmlFor="account-new-password-confirm">Confirm new password</label><PasswordInput id="account-new-password-confirm" required minLength={12} autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} wrapperClassName="mt-1" className="w-full rounded-xl border px-3 py-3" toggleClassName="text-slate-700 hover:text-slate-950 focus:ring-slate-300" /></div>
         <button disabled={pending} className="rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{pending ? 'Updating…' : 'Change password'}</button>
       </form>
     </section>;

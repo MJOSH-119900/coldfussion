@@ -1,8 +1,7 @@
 'use server';
-import fs from 'fs/promises';
 import path from 'path';
 import { revalidatePath } from 'next/cache';
-import { getSession, requireAdmin, hashPassword, hashLookup } from '../../../lib/auth';
+import { getSession, requireAdmin, requireVendor } from '../../../lib/auth';
 import { nextId, readJson, updateJson, writeJson } from '../../../lib/json-store';
 import { Product } from '../../(public)/components/types/store';
 import { deleteMusicTrack, getMusicTracks, getMusicSettings, saveMusicTrack, setMusicEnabled } from '../../../lib/music';
@@ -11,9 +10,11 @@ import type { BannerIntervalUnit, BannerSettings } from '../../(public)/componen
 import { getBrandSettings, saveBrandSettings } from '../../../lib/branding';
 import { getOwnerAbout, saveOwnerAbout } from '../../../lib/about';
 import { getAdminCustomerContent, getAdminCustomerContentCount, markCustomerInquiryRead, moderateProductFeedback, removeProductFeedback } from '../../../lib/customer-content';
-import { checkPasswordAgainstBreaches } from '../../../lib/password-security';
 import { getUpgradeAnnouncement, saveUpgradeAnnouncement } from '../../../lib/announcements';
-const UPLOAD_DIR = path.resolve('./public/uploads');
+import { checkPasswordAgainstBreaches } from '../../../lib/password-security';
+import { createSupabaseAdminClient } from '../../../server/supabase-admin';
+import { createSupabaseServerClient, getAuthCallbackUrl } from '../../../server/supabase';
+import { deleteStoreAsset, deleteStoreAssetIfUnused, uploadStoreAsset } from '../../../server/storage';
 const validEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 export async function getUpgradeAnnouncementAction() {
     await requireAdmin();
@@ -43,13 +44,15 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
         return { success: false, error: 'Product not found' };
     if (session.role === 'vendor' && existing && existing.vendor_id !== session.vendorId)
         return { success: false, error: 'You cannot edit another vendor’s product.' };
+    const owner = existing?.vendor_id || (session.role === 'admin' ? vendorId : session.vendorId);
+    if (!owner) return { success: false, error: 'Vendor account is not linked to a valid vendor profile.' };
+    const productRecordId = existing?.id || productId || `prod-${Date.now()}`;
     const uploadedFiles = formData.getAll('image_files').filter((v): v is File => v instanceof File && v.size > 0);
-    if (uploadedFiles.length > 7) return { success: false, error: 'Upload a maximum of 7 product photos at a time.' };
+    if (uploadedFiles.length > 4) return { success: false, error: 'Upload a maximum of 4 product photos at a time.' };
     const uploadedImages: string[] = [];
     if (uploadedFiles.length) {
-        await fs.mkdir(UPLOAD_DIR, { recursive: true });
         for (const file of uploadedFiles) {
-            if (file.size > 12 * 1024 * 1024) return { success: false, error: `“${file.name}” is larger than 12 MB. Resize the image and upload it again.` };
+            if (file.size > 500 * 1024) return { success: false, error: `“${file.name}” exceeds the 500 KB upload ceiling. Select it again for browser optimization.` };
             const ext = path.extname(file.name).toLowerCase();
             const allowed = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif']);
             if (!allowed.has(ext)) return { success: false, error: `Unsupported picture “${file.name}”. Use JPG, JPEG, PNG, WEBP, GIF or AVIF.` };
@@ -61,15 +64,12 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
             const isAvif = ext === '.avif' && bytes.subarray(4, 12).toString().includes('ftypavif');
             if (!(isJpeg || isPng || isWebp || isGif || isAvif)) return { success: false, error: `“${file.name}” is not a valid ${ext.slice(1).toUpperCase()} picture. Upload an original JPG, PNG, WEBP, GIF or AVIF image.` };
             const name = `${vendorId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-            await fs.writeFile(path.join(UPLOAD_DIR, name), bytes);
-            uploadedImages.push(`/uploads/${name}`);
+            uploadedImages.push(await uploadStoreAsset(`${owner}/products/${productRecordId}/${name.replace(/\.[^.]+$/, '.webp')}`, bytes, 'image/webp'));
         }
     }
     const price = Number(formData.get('price') || 0);
     if (!Number.isFinite(price) || price < 0) return { success: false, error: 'Enter a valid product price.' };
     const compareRaw = String(formData.get('compare_at_price') ?? '').trim();
-    const owner = existing?.vendor_id || (session.role === 'admin' ? vendorId : session.vendorId);
-    if (!owner) return { success: false, error: 'Vendor account is not linked to a valid vendor profile.' };
     const sizePricesText = String(formData.get('size_prices_text') || '');
     const sizeLines = sizePricesText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
     const size_prices = sizeLines.map(line => {
@@ -106,23 +106,38 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
     if (compareRaw && (compare === undefined || !Number.isFinite(compare) || compare <= highestPriceUsingMainCompare))
         return { success: false, error: 'The main previous price must be higher than every current size price without an individual previous price.' };
     const isAdmin = session.role === 'admin';
-    const product: Product = { id: existing?.id || `prod-${Date.now()}`, vendor_id: owner, title: String(formData.get('title') || '').trim(), description: String(formData.get('description') || '').trim(), price, compare_at_price: compare, size_prices: size_prices.length ? size_prices : undefined, available_quantity: Math.max(0, Number(formData.get('available_quantity') || 0)), is_available: formData.get('is_available') === 'true' && Number(formData.get('available_quantity') || 0) > 0, giveaway: formData.get('giveaway') === 'true', giveaway_announcement: String(formData.get('giveaway_announcement') || '').trim() || undefined, images: (uploadedImages.length ? uploadedImages : existing?.images || []).slice(0, 7), category: String(formData.get('category') || 'Other').trim(), tags: String(formData.get('tags') || '').split(',').map(s => s.trim()).filter(Boolean), likes_count: existing?.likes_count || 0, vendor_whatsapp: String(formData.get('vendor_whatsapp') || '').trim(), location: String(formData.get('location') || '').trim(), condition: (String(formData.get('condition') || 'new') as Product['condition']), detail_gallery_enabled: formData.get('detail_gallery_enabled') === 'true', is_latest: formData.get('is_latest') === 'true', is_top_selling: isAdmin ? formData.get('is_top_selling') === 'true' : existing?.is_top_selling || false, related_products_mode: (String(formData.get('related_products_mode') || 'category') as Product['related_products_mode']), related_product_ids: formData.getAll('related_product_ids').map(String).filter(Boolean).slice(0, 4) };
-    await writeJson('products.json', productId ? products.map(p => p.id === productId ? product : p) : [...products, product]);
+    const product: Product = { id: existing?.id || `prod-${Date.now()}`, vendor_id: owner, title: String(formData.get('title') || '').trim(), description: String(formData.get('description') || '').trim(), price, compare_at_price: compare, size_prices: size_prices.length ? size_prices : undefined, available_quantity: Math.max(0, Number(formData.get('available_quantity') || 0)), is_available: formData.get('is_available') === 'true' && Number(formData.get('available_quantity') || 0) > 0, giveaway: formData.get('giveaway') === 'true', giveaway_announcement: String(formData.get('giveaway_announcement') || '').trim() || undefined, images: (uploadedImages.length ? uploadedImages : existing?.images || []).slice(0, 4), category: String(formData.get('category') || 'Other').trim(), tags: String(formData.get('tags') || '').split(',').map(s => s.trim()).filter(Boolean), likes_count: existing?.likes_count || 0, vendor_whatsapp: String(formData.get('vendor_whatsapp') || '').trim(), location: String(formData.get('location') || '').trim(), condition: (String(formData.get('condition') || 'new') as Product['condition']), detail_gallery_enabled: formData.get('detail_gallery_enabled') === 'true', is_latest: formData.get('is_latest') === 'true', is_top_selling: isAdmin ? formData.get('is_top_selling') === 'true' : existing?.is_top_selling || false, related_products_mode: (String(formData.get('related_products_mode') || 'category') as Product['related_products_mode']), related_product_ids: formData.getAll('related_product_ids').map(String).filter(Boolean).slice(0, 4) };
+    product.id = productRecordId;
+    try {
+        await writeJson('products.json', productId ? products.map(p => p.id === productId ? product : p) : [...products, product]);
+    } catch (error) {
+        await Promise.all(uploadedImages.map(deleteStoreAsset));
+        throw error;
+    }
+    await Promise.all((existing?.images || []).filter(image => !product.images.includes(image)).map(deleteStoreAssetIfUnused));
     revalidatePath('/');
     revalidatePath('/admin');
     revalidatePath('/vendor/dashboard');
     revalidatePath(`/product/${product.id}`);
     return { success: true, product };
 }
-export async function deleteProductAction(id: string) { const session = await getSession(); if (!session)
-    return { success: false, error: 'Unauthorized' }; const products = await readJson<Product[]>('products.json', []); const target = products.find(p => p.id === id); if (!target)
-    return { success: false, error: 'Product not found' }; if (session.role === 'vendor' && target.vendor_id !== session.vendorId)
-    return { success: false, error: 'You cannot delete another vendor product' }; if (target?.images?.[0]?.startsWith('/uploads/')) {
-    try {
-        await fs.unlink(path.join(path.resolve('./public'), target.images[0]));
-    }
-    catch { }
-} await writeJson('products.json', products.filter(p => p.id !== id)); revalidatePath('/'); revalidatePath('/admin'); return { success: true }; }
+export async function deleteProductAction(id: string) {
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'vendor'))
+        return { success: false, error: 'Unauthorized' };
+    const products = await readJson<Product[]>('products.json', []);
+    const target = products.find(product => product.id === id);
+    if (!target) return { success: false, error: 'Product not found' };
+    if (session.role === 'vendor' && target.vendor_id !== session.vendorId)
+        return { success: false, error: 'You cannot delete another vendor product.' };
+
+    await writeJson('products.json', products.filter(product => product.id !== id));
+    await Promise.all((target.images || []).filter(image => image.startsWith('/uploads/')).map(deleteStoreAssetIfUnused));
+    revalidatePath('/');
+    revalidatePath('/admin');
+    revalidatePath('/vendor/dashboard');
+    return { success: true };
+}
 export async function createVendorFromRequestAction(requestId: string) {
     await requireAdmin();
     const normalizedId = requestId.trim().toUpperCase().replace('-', '');
@@ -135,17 +150,35 @@ export async function createVendorFromRequestAction(requestId: string) {
     if (request.status !== 'pending')
         return { success: false, error: `This application is already ${request.status}.` };
     const email = String(request.email).trim().toLowerCase();
-    const users = await readJson<Record<string, any>>('users_auth.json', {});
-    if (users[email] || users[hashLookup(email)])
-        return { success: false, error: 'An account already exists for this email.' };
-    const passwordHash = String(request.password_hash || '');
-    if (!/^scrypt:[^:]+:[a-f0-9]+$/i.test(passwordHash))
-        return { success: false, error: 'Application has no valid hashed password. Ask the applicant to apply again.' };
-    const vendorId = await nextId('VEN', 4, 'vendor');
-    const vendor = { vendor_id: vendorId, business_name: request.business_name, owner_name: request.owner_name, email, whatsapp_number: request.whatsapp_number, business_address: request.business_address, business_category: request.business_category, business_description: request.business_description, logo: request.logo || '', status: 'approved', created_at: new Date().toISOString() };
-    await writeJson('vendors.json', [...(await readJson<any[]>('vendors.json', [])), vendor]);
-    users[email] = { role: 'vendor', vendor_id: vendorId, password: passwordHash, status: 'active', created_at: new Date().toISOString() };
-    await writeJson('users_auth.json', users);
+    const vendors = await readJson<any[]>('vendors.json', []);
+    const existingVendor = vendors.find(v => String(v.email || '').trim().toLowerCase() === email);
+    const vendorId = existingVendor?.vendor_id || await nextId('VEN', 4, 'vendor');
+    let supabaseUid = String(request.supabase_uid || '');
+    const adminSupabase = createSupabaseAdminClient();
+    if (!supabaseUid) {
+        const { data: invitation, error: invitationError } = await adminSupabase.auth.admin.inviteUserByEmail(
+            email,
+            { redirectTo: getAuthCallbackUrl('/password-reset/complete') },
+        );
+        if (invitationError || !invitation.user) {
+            console.error('Vendor Auth invitation failed:', invitationError?.message || 'No invited user returned.');
+            return { success: false, error: 'Could not send the vendor account invitation. Configure SUPABASE_SECRET_KEY on the server or ask the vendor to reapply.' };
+        }
+        supabaseUid = invitation.user.id;
+    }
+
+    const { error: roleError } = await adminSupabase.auth.admin.updateUserById(supabaseUid, {
+        app_metadata: { role: 'vendor', vendor_id: vendorId },
+    });
+    if (roleError) {
+        console.error('Vendor Auth role assignment failed:', roleError.message);
+        return { success: false, error: 'Could not activate the vendor account. Try again later.' };
+    }
+
+    const vendor = { ...existingVendor, vendor_id: vendorId, business_name: request.business_name, owner_name: request.owner_name, email, whatsapp_number: request.whatsapp_number, business_address: request.business_address, business_category: request.business_category, business_description: request.business_description, logo: request.logo || existingVendor?.logo || '', status: 'approved', created_at: existingVendor?.created_at || new Date().toISOString() };
+    await writeJson('vendors.json', existingVendor
+        ? vendors.map(v => v.vendor_id === vendorId ? vendor : v)
+        : [...vendors, vendor]);
     await writeJson('vendor_requests.json', requests.map(r => r.request_id === request.request_id ? { ...r, status: 'approved', vendor_id: vendorId, approved_at: new Date().toISOString(), password_hash: undefined } : r));
     revalidatePath('/admin');
     revalidatePath('/vendor/login');
@@ -174,10 +207,12 @@ export async function registerVendorAction(data: FormData) {
     const email = String(data.get('email') || '').trim().toLowerCase();
     const password = String(data.get('password') || '');
     const confirmation = String(data.get('password_confirmation') || '');
+    if (!validEmail(email))
+        return { success: false, error: 'Enter a valid email address.' };
+    if (password.length < 12)
+        return { success: false, error: 'Use a password of at least 12 characters.' };
     if (password !== confirmation)
         return { success: false, error: 'Passwords do not match.' };
-    if (!validEmail(email) || password.length < 10)
-        return { success: false, error: 'Use a valid email and a password of at least 10 characters.' };
     const breachStatus = await checkPasswordAgainstBreaches(password);
     if (breachStatus === 'breached')
         return { success: false, error: 'This password appears in known data breaches. Choose a different password.' };
@@ -185,28 +220,40 @@ export async function registerVendorAction(data: FormData) {
         return { success: false, error: 'Could not check the password against breach data. Try again shortly.' };
     const vendors = await readJson<any[]>('vendors.json', []);
     const requests = await readJson<any[]>('vendor_requests.json', []);
-    const users = await readJson<Record<string, any>>('users_auth.json', {});
-    if (users[email] || vendors.some(v => v.email === email) || requests.some(r => r.email === email && r.status === 'pending'))
+    if (vendors.some(v => String(v.email || '').trim().toLowerCase() === email && ['approved', 'active'].includes(String(v.status))) || requests.some(r => String(r.email || '').trim().toLowerCase() === email && r.status === 'pending'))
         return { success: false, error: 'This email is already registered or pending approval.' };
+    const supabase = await createSupabaseServerClient();
+    const { data: signup, error: signupError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: getAuthCallbackUrl('/vendor/login') },
+    });
+    if (signupError || !signup.user || !signup.user.identities?.length)
+        return { success: false, error: 'This email may already have an account. Sign in or request a password reset.' };
+    const needsEmailConfirmation = !signup.session && !signup.user.email_confirmed_at;
     const requestId = await nextId('VREQ', 4, 'vendorRequest');
-    const passwordHash = await hashPassword(password);
     const logoFile = data.get('business_logo');
     let logo = '';
     if (logoFile instanceof File && logoFile.size > 0) {
-        await fs.mkdir(UPLOAD_DIR, { recursive: true });
+        if (logoFile.size > 500 * 1024) return { success: false, error: 'Business logos must be 500 KB or smaller after image optimization.' };
         const ext = path.extname(logoFile.name).toLowerCase();
         const safe = /^\.(jpg|jpeg|png|webp)$/.test(ext) ? ext : '.jpg';
-        const fileName = `vendor-${requestId}-${Date.now()}${safe}`;
-        await fs.writeFile(path.join(UPLOAD_DIR, fileName), Buffer.from(await logoFile.arrayBuffer()));
-        logo = `/uploads/${fileName}`;
+        const fileName = `logo-${Date.now()}${safe}`;
+        logo = await uploadStoreAsset(`vendor-requests/${requestId}/${fileName}`, Buffer.from(await logoFile.arrayBuffer()), logoFile.type || 'application/octet-stream');
     }
-    const request = { request_id: requestId, status: 'pending', business_name: String(data.get('business_name') || '').trim(), owner_name: String(data.get('owner_name') || '').trim(), email, whatsapp_number: String(data.get('whatsapp_number') || '').trim(), business_address: String(data.get('business_address') || '').trim(), business_category: String(data.get('business_category') || '').trim(), business_description: String(data.get('business_description') || '').trim(), logo, password_hash: passwordHash, created_at: new Date().toISOString() };
-    await writeJson('vendor_requests.json', [...requests, request]);
+    const request = { request_id: requestId, status: 'pending', business_name: String(data.get('business_name') || '').trim(), owner_name: String(data.get('owner_name') || '').trim(), email, supabase_uid: signup.user.id, whatsapp_number: String(data.get('whatsapp_number') || '').trim(), business_address: String(data.get('business_address') || '').trim(), business_category: String(data.get('business_category') || '').trim(), business_description: String(data.get('business_description') || '').trim(), logo, created_at: new Date().toISOString() };
+    try {
+        await writeJson('vendor_requests.json', [...requests, request]);
+    } catch (error) {
+        if (logo) await deleteStoreAsset(logo);
+        throw error;
+    }
+    if (signup.session) await supabase.auth.signOut();
     const siteSettings = await readJson<{ admin_whatsapp?: string }>('site_settings.json', { admin_whatsapp: '' });
     const adminWhatsApp = String(siteSettings.admin_whatsapp || '').replace(/\D/g, '');
     const message = ['Fussion vendor application', `Application: ${requestId}`, `Business: ${request.business_name}`, `Owner: ${request.owner_name}`, `Email: ${request.email}`, `WhatsApp: ${request.whatsapp_number}`, `Category: ${request.business_category}`, `Address: ${request.business_address}`, `Description: ${request.business_description}`, '', 'Please review this application in the Fussion Admin Dashboard and approve or reject it.'].join('\n');
     const whatsappUrl = adminWhatsApp.length >= 10 && adminWhatsApp.length <= 15 ? `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(message)}` : undefined;
-    return { success: true, requestId, whatsappUrl, whatsappConfigured: Boolean(whatsappUrl) };
+    return { success: true, requestId, whatsappUrl, whatsappConfigured: Boolean(whatsappUrl), needsEmailConfirmation };
 }
 export async function getAdminWhatsAppAction() {
     await requireAdmin();
@@ -224,8 +271,11 @@ export async function saveAdminWhatsAppAction(phone: string) {
     revalidatePath('/vendor/register');
     return { success: true, phone: normalized };
 }
-export async function getVendorProductsAction() { const session = await getSession(); if (!session || session.role !== 'vendor')
-    return []; const products = await readJson<Product[]>('products.json', []); return products.filter(p => p.vendor_id === session.vendorId); }
+export async function getVendorProductsAction() {
+    const session = await requireVendor();
+    const products = await readJson<Product[]>('products.json', []);
+    return products.filter(product => product.vendor_id === session.vendorId);
+}
 export async function getVendorRequestsAction() { await requireAdmin(); return readJson<any[]>('vendor_requests.json', []); }
 export async function getVendorsAction() { await requireAdmin(); return readJson<any[]>('vendors.json', []); }
 export async function getMarketplaceStatsAction() { await requireAdmin(); const [products, vendors, orders, analytics] = await Promise.all([readJson<Product[]>('products.json', []), readJson<any[]>('vendors.json', []), readJson<any[]>('orders.json', []), readJson<any[]>('analytics.json', [])]); const sold = orders.filter(o => o.status === 'Sold'); return { vendors: vendors.length, activeVendors: vendors.filter(v => v.status === 'approved' || v.status === 'active').length, pendingVendors: (await readJson<any[]>('vendor_requests.json', [])).filter(v => v.status === 'pending').length, products: products.length, orders: orders.length, pendingOrders: orders.filter(o => ['Pending', 'Acknowledged', 'Processing', 'Completing'].includes(o.status)).length, completedSales: sold.length, revenue: sold.reduce((s, o) => s + o.total, 0), views: analytics.filter(a => a.type === 'view').length }; }

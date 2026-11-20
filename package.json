@@ -2,26 +2,45 @@
   "name": "tech-fashion-store",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:normalize-store": "node --conditions=react-server scripts/run-server-tsx.mjs scripts/normalize-store-to-relational.ts",
+    "db:migrate-assets": "node --conditions=react-server scripts/run-server-tsx.mjs scripts/migrate-assets-to-supabase.ts",
+    "db:prune-assets": "node --conditions=react-server scripts/run-server-tsx.mjs scripts/prune-unused-assets.ts",
+    "db:structure-assets": "node --conditions=react-server scripts/run-server-tsx.mjs scripts/structure-store-assets.ts",
+    "auth:reset": "tsx scripts/reset-auth-credentials.ts"
   },
   "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "@supabase/server": "^1.9.2",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.119.2",
+    "dotenv": "^16.4.7",
     "fflate": "^0.8.2",
-    "next": "16.4.3",
-    "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "next": "^16.4.6",
+    "pg": "^8.13.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "server-only": "^0.0.1"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
-    "@types/node": "^20",
+    "@types/node": "^20.19.43",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.4.3",
+    "eslint-config-next": "^16.4.6",
+    "prisma": "^7.10.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
   }
 }

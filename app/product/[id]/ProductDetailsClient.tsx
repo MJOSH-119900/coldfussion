@@ -23,7 +23,7 @@ export default function ProductDetailsClient({ product, related, feedback }: {
     const { addToCart, toggleWishlist, isWishlisted, buyNow } = useCart();
     const { notify } = useToast();
     const { brand } = useBranding();
-    const gallery = product.detail_gallery_enabled ? (product.images || []).slice(0, 7) : (product.images || []).slice(0, 1);
+    const gallery = product.detail_gallery_enabled ? (product.images || []).slice(0, 4) : (product.images || []).slice(0, 1);
     const unavailable = product.is_available === false || (product.available_quantity ?? 0) <= 0;
     const max = product.available_quantity ?? 1;
     const selectedVariant = product.size_prices?.find(v => v.size === selectedSize);

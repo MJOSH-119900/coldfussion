@@ -136,7 +136,7 @@ export default function MusicManager({ initialTracks }: { initialTracks: MusicTr
                         accept=".mp3,.m4a,.ogg,.wav,.webm,audio/mpeg,audio/mp4,audio/ogg,audio/wav,audio/webm"
                         className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                     />
-                    <p className="mt-1 text-[11px] text-slate-500">MP3, M4A, OGG, WAV or WebM audio · maximum 50 MB. For best compatibility, use MP3 (.mp3).</p>
+                    <p className="mt-1 text-[11px] text-slate-500">MP3, M4A, OGG, WAV or WebM · each song is limited to 10 MB, with a 10 MB total library limit.</p>
                 </div>
 
                 <button

@@ -1,0 +1,234 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Keep the existing document shapes in PostgreSQL JSONB so the current data
+// model and IDs remain intact while the app uses Prisma for database access.
+model StoreRecord {
+  collection String
+  recordId   String
+  data       Json
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@id([collection, recordId])
+  @@index([collection])
+  @@map("store_records")
+}
+
+model StoreSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("store_settings")
+}
+
+model StoreCounter {
+  key   String @id
+  value Int    @default(0)
+
+  @@map("store_counters")
+}
+
+// Store data is represented as normal Postgres columns so Supabase's Table
+// Editor can browse and filter the business records directly.
+model Product {
+  id                    String   @id
+  sortOrder             Int      @default(0) @map("sort_order")
+  vendorId              String   @map("vendor_id")
+  title                 String
+  description           String
+  price                 Float
+  compareAtPrice        Float?   @map("compare_at_price")
+  sizePrices            Json?    @map("size_prices")
+  giveaway              Boolean  @default(false)
+  giveawayAnnouncement  String?  @map("giveaway_announcement")
+  availableQuantity     Int      @default(0) @map("available_quantity")
+  isAvailable           Boolean  @default(false) @map("is_available")
+  images                String[] @default([])
+  category              String   @default("Other")
+  tags                  String[] @default([])
+  likesCount            Int      @default(0) @map("likes_count")
+  vendorWhatsapp        String   @default("") @map("vendor_whatsapp")
+  vendorBusinessName    String?  @map("vendor_business_name")
+  location              String?
+  condition             String?
+  detailGalleryEnabled  Boolean  @default(false) @map("detail_gallery_enabled")
+  isLatest              Boolean  @default(false) @map("is_latest")
+  isTopSelling          Boolean  @default(false) @map("is_top_selling")
+  relatedProductsMode   String?  @map("related_products_mode")
+  relatedProductIds     String[] @default([]) @map("related_product_ids")
+
+  @@index([vendorId])
+  @@index([category])
+  @@index([isAvailable])
+  @@map("products")
+}
+
+model Vendor {
+  vendorId          String @id @map("vendor_id")
+  sortOrder         Int    @default(0) @map("sort_order")
+  businessName      String @map("business_name")
+  ownerName         String @map("owner_name")
+  email             String
+  whatsappNumber    String @map("whatsapp_number")
+  businessAddress   String @map("business_address")
+  businessCategory  String @map("business_category")
+  businessDescription String @map("business_description")
+  logo              String @default("")
+  status            String
+  createdAt         String @map("created_at")
+  updatedAt         String? @map("updated_at")
+
+  @@index([email])
+  @@index([status])
+  @@map("vendors")
+}
+
+model VendorRequest {
+  requestId           String  @id @map("request_id")
+  sortOrder           Int     @default(0) @map("sort_order")
+  status              String
+  businessName        String  @map("business_name")
+  ownerName           String  @map("owner_name")
+  email               String
+  supabaseUid         String? @map("supabase_uid")
+  whatsappNumber      String  @map("whatsapp_number")
+  businessAddress     String  @map("business_address")
+  businessCategory    String  @map("business_category")
+  businessDescription String  @map("business_description")
+  logo                String  @default("")
+  vendorId            String? @map("vendor_id")
+  createdAt           String  @map("created_at")
+  approvedAt          String? @map("approved_at")
+  rejectedAt          String? @map("rejected_at")
+  rejectionId         String? @map("rejection_id")
+
+  @@index([email])
+  @@index([status])
+  @@map("vendor_requests")
+}
+
+model OrderRecord {
+  orderId          String                   @id @map("order_id")
+  sortOrder        Int                      @default(0) @map("sort_order")
+  checkoutId       String?                  @map("checkout_id")
+  vendorId         String                   @map("vendor_id")
+  customerName     String?                  @map("customer_name")
+  customerPhone    String?                  @map("customer_phone")
+  total            Float
+  checkoutMethod   String                   @map("checkout_method")
+  status           String
+  createdAt        String                   @map("created_at")
+  whatsappHandoffAt String?                 @map("whatsapp_handoff_at")
+  vendorWhatsapp   String?                  @map("vendor_whatsapp")
+  items            OrderLine[]
+  statusHistory    OrderStatusChange[]
+
+  @@index([vendorId])
+  @@index([status])
+  @@index([checkoutId])
+  @@map("orders")
+}
+
+model OrderLine {
+  orderId       String      @map("order_id")
+  sortOrder     Int         @map("sort_order")
+  productId     String      @map("product_id")
+  vendorId      String      @map("vendor_id")
+  productName   String      @map("product_name")
+  selectedSize  String?     @map("selected_size")
+  productImage  String?     @map("product_image")
+  unitPrice     Float       @map("unit_price")
+  quantity      Int
+  subtotal      Float
+  order         OrderRecord @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+
+  @@id([orderId, sortOrder])
+  @@index([productId])
+  @@index([vendorId])
+  @@map("order_items")
+}
+
+model OrderStatusChange {
+  orderId   String      @map("order_id")
+  sortOrder Int         @map("sort_order")
+  status    String
+  at        String
+  actor     String
+  order     OrderRecord @relation(fields: [orderId], references: [orderId], onDelete: Cascade)
+
+  @@id([orderId, sortOrder])
+  @@map("order_status_history")
+}
+
+model AnalyticsEvent {
+  eventId   String @id @map("event_id")
+  sortOrder Int    @default(0) @map("sort_order")
+  type      String
+  productId String? @map("product_id")
+  vendorId  String? @map("vendor_id")
+  visitorId String? @map("visitor_id")
+  timestamp String
+  orderId   String? @map("order_id")
+
+  @@index([type])
+  @@index([productId])
+  @@index([vendorId])
+  @@map("analytics_events")
+}
+
+model ProductLike {
+  productId String @map("product_id")
+  visitorId String @map("visitor_id")
+  sortOrder Int    @default(0) @map("sort_order")
+  createdAt String @map("created_at")
+
+  @@id([productId, visitorId])
+  @@map("product_likes")
+}
+
+model CustomerInquiry {
+  id        String @id
+  sortOrder Int    @default(0) @map("sort_order")
+  whatsapp  String
+  category  String
+  message   String
+  createdAt String @map("created_at")
+  status    String
+
+  @@index([status])
+  @@index([createdAt])
+  @@map("customer_inquiries")
+}
+
+model ProductFeedback {
+  id           String @id
+  sortOrder    Int    @default(0) @map("sort_order")
+  productId    String @map("product_id")
+  productTitle String @map("product_title")
+  name         String
+  rating       Int
+  message      String
+  createdAt    String @map("created_at")
+  status       String
+
+  @@index([productId])
+  @@index([status])
+  @@map("product_feedback")
+}
+
+model MusicTrack {
+  id        String @id
+  sortOrder Int    @default(0) @map("sort_order")
+  title     String
+  file      String
+  createdAt String @map("created_at")
+
+  @@map("music_tracks")
+}

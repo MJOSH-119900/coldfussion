@@ -5,6 +5,7 @@ import type { BrandSettings } from '../../../(public)/components/types/store';
 import { useBranding } from '../../../(public)/components/BrandingProvider';
 import { useToast } from '../../../components/ToastProvider';
 import { saveBrandSettingsAction } from '../actions';
+import { optimizeImageInput } from '../../../../lib/image-optimizer';
 
 export default function BrandManager({ initialBrand }: { initialBrand: BrandSettings }) {
     const [companyName, setCompanyName] = useState(initialBrand.companyName);
@@ -60,6 +61,7 @@ export default function BrandManager({ initialBrand }: { initialBrand: BrandSett
                         name="logo_file"
                         type="file"
                         accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"
+                        onChange={async event => { const input = event.currentTarget; input.disabled = true; try { await optimizeImageInput(input); } catch (error) { input.value = ''; notify('error', error instanceof Error ? error.message : 'Could not prepare the logo.', 'Image preparation failed'); } finally { input.disabled = false; } }}
                         className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
                     />
                     <span className="mt-1 block text-xs font-normal text-slate-500">JPG, PNG or WEBP · maximum 5 MB.</span>

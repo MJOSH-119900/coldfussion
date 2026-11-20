@@ -10,7 +10,7 @@ import {
   updateOrderStatus,
   updateVendorWhatsAppAction,
 } from '../../../lib/marketplace';
-import { getVendorProductsAction } from '../../(admin)/admin/actions';
+import { deleteProductAction, getVendorProductsAction } from '../../(admin)/admin/actions';
 import { Order, Product } from '../../(public)/components/types/store';
 import ProductForm from '../../(admin)/admin/components/ProductForm';
 import { useToast } from '../../components/ToastProvider';
@@ -36,7 +36,7 @@ type Section = typeof sections[number]['id'];
 
 export default function VendorDashboard({ vendorId }: { vendorId: string }) {
   const router = useRouter();
-  const { notify } = useToast();
+  const { notify, confirm } = useToast();
   const { brand } = useBranding();
   const [section, setSection] = useState<Section>('Overview');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -46,6 +46,7 @@ export default function VendorDashboard({ vendorId }: { vendorId: string }) {
   const [editing, setEditing] = useState<Product>();
   const [whatsapp, setWhatsapp] = useState('');
   const [savingWhatsApp, setSavingWhatsApp] = useState(false);
+  const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = async () => {
@@ -76,6 +77,29 @@ export default function VendorDashboard({ vendorId }: { vendorId: string }) {
       return;
     }
     notify('success', 'Your customer WhatsApp number has been updated.', 'Profile saved');
+  }
+
+  async function deleteProduct(product: Product) {
+    const accepted = await confirm({
+      title: 'Delete this product?',
+      message: 'This removes the product from your store. Order history will remain intact.',
+      confirmText: 'Delete product',
+      cancelText: 'Keep product',
+      danger: true,
+    });
+    if (!accepted) return;
+    setDeletingProductId(product.id);
+    try {
+      const result = await deleteProductAction(product.id);
+      if (!result.success) throw new Error(result.error || 'Could not delete this product.');
+      if (editing?.id === product.id) setEditing(undefined);
+      notify('success', 'The product was removed from your store.', 'Product deleted');
+      await refresh();
+    } catch (error) {
+      notify('error', error instanceof Error ? error.message : 'Could not delete this product.', 'Delete failed');
+    } finally {
+      setDeletingProductId(null);
+    }
   }
 
   async function changeOrderStatus(orderId: string, status: Order['status'], successMessage: string, title: string) {
@@ -206,7 +230,7 @@ export default function VendorDashboard({ vendorId }: { vendorId: string }) {
             {section === 'Products' && <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
               <section className="min-w-0 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-black">My products ({products.length})</h2><p className="mt-1 text-sm text-slate-500">Published products appear in the admin product catalogue.</p></div><button onClick={() => setEditing(undefined)} className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white">+ Add product</button></div>
-                <div className="mt-4 space-y-2">{products.map(product => <div key={product.id} className="flex items-center justify-between gap-3 rounded-xl border p-3"><div className="flex min-w-0 items-center gap-3"><img src={product.images?.[0]} className="h-12 w-12 rounded-lg object-cover" alt=""/><div className="min-w-0"><p className="truncate font-bold">{product.title}</p><p className="text-xs text-slate-500">{product.category} · ♥ {product.likes_count || 0} likes · {product.condition === 'spare-part' ? 'Spare part' : product.condition || 'New'} · {product.location || 'Location not set'} · ₦{product.size_prices?.length ? `From ${Math.min(...product.size_prices.map(v => v.price)).toLocaleString()}` : product.price.toLocaleString()}</p><p className="mt-1 text-xs text-slate-500">Stock: {product.available_quantity ?? 0} · {product.is_available === false ? 'Unavailable' : 'Available'}</p></div></div><button onClick={() => setEditing(product)} className="shrink-0 rounded-lg border px-3 py-1.5 text-xs font-bold hover:border-violet-400">Edit</button></div>)}{!products.length && <p className="py-8 text-center text-sm text-slate-500">No products yet. Use Add product to publish your first listing.</p>}</div>
+                <div className="mt-4 space-y-2">{products.map(product => <div key={product.id} className="flex items-center justify-between gap-3 rounded-xl border p-3"><div className="flex min-w-0 items-center gap-3"><img src={product.images?.[0]} className="h-12 w-12 rounded-lg object-cover" alt=""/><div className="min-w-0"><p className="truncate font-bold">{product.title}</p><p className="text-xs text-slate-500">{product.category} · ♥ {product.likes_count || 0} likes · {product.condition === 'spare-part' ? 'Spare part' : product.condition || 'New'} · {product.location || 'Location not set'} · ₦{product.size_prices?.length ? `From ${Math.min(...product.size_prices.map(v => v.price)).toLocaleString()}` : product.price.toLocaleString()}</p><p className="mt-1 text-xs text-slate-500">Stock: {product.available_quantity ?? 0} · {product.is_available === false ? 'Unavailable' : 'Available'}</p></div></div><button onClick={() => setEditing(product)} className="shrink-0 rounded-lg border px-3 py-1.5 text-xs font-bold hover:border-violet-400">Edit</button><button type="button" disabled={deletingProductId === product.id} onClick={() => void deleteProduct(product)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-50">{deletingProductId === product.id ? 'Deleting…' : 'Delete'}</button></div>)}{!products.length && <p className="py-8 text-center text-sm text-slate-500">No products yet. Use Add product to publish your first listing.</p>}</div>
               </section>
               <div className="min-w-0 xl:sticky xl:top-28 xl:self-start"><ProductForm key={editing?.id || 'new-product'} currentVendorId={vendorId} editProduct={editing} products={products} onSuccess={async () => { setEditing(undefined); await refresh(); }} onCancel={() => setEditing(undefined)}/></div>
             </div>}

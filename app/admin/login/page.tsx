@@ -6,9 +6,10 @@ import { useRouter } from 'next/navigation';
 import { adminLoginAction } from './actions';
 import { useToast } from '../../components/ToastProvider';
 import { useBranding } from '../../(public)/components/BrandingProvider';
+import PasswordInput from '../../components/PasswordInput';
 
 export default function AdminLogin() {
-    const [username, setUsername] = useState('');
+    const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [pending, setPending] = useState(false);
@@ -21,7 +22,7 @@ export default function AdminLogin() {
         setError('');
         setPending(true);
         try {
-            const result = await adminLoginAction(username, password);
+            const result = await adminLoginAction(email, password);
             if (!result.success) {
                 const message = result.error || 'Login failed.';
                 setError(message);
@@ -67,20 +68,20 @@ export default function AdminLogin() {
             <p className="mt-2 text-sm leading-6 text-slate-500">Enter your administrator credentials to continue.</p>
 
             <label className="mt-8 block text-sm font-bold text-slate-700">
-              Username
-              <input required value={username} onChange={e => setUsername(e.target.value)} type="text" autoComplete="username" placeholder="Admin username" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100"/>
+              Email address
+              <input required value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="email" placeholder="Admin email address" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100"/>
             </label>
-            <label className="mt-5 block text-sm font-bold text-slate-700">
-              Password
-              <input required value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" placeholder="Enter your password" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100"/>
-            </label>
+            <div className="mt-5">
+              <label htmlFor="admin-password" className="block text-sm font-bold text-slate-700">Password</label>
+              <PasswordInput id="admin-password" required value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" placeholder="Enter your password" wrapperClassName="mt-2" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100" toggleClassName="text-violet-700 hover:text-violet-900 focus:ring-violet-300" />
+            </div>
             <div className="mt-2 text-right">
               <Link href="/admin/password-reset" className="text-sm font-bold text-violet-700 underline decoration-violet-300 underline-offset-4 transition hover:text-violet-900">Forgot password?</Link>
             </div>
 
             {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
             <button disabled={pending} className="mt-6 w-full rounded-xl bg-violet-700 py-3.5 font-bold text-white shadow-lg shadow-violet-700/20 transition hover:bg-violet-800 focus:outline-none focus:ring-4 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{pending ? 'Signing in…' : 'Sign in to admin'}</button>
-            <p className="mt-6 text-center text-sm text-slate-500">Setting up for the first time? <Link href="/admin/register" className="font-bold text-violet-700 hover:text-violet-900">Create admin account</Link></p>
+            <p className="mt-6 text-center text-sm text-slate-500">First admin setup? <Link href="/admin/register" className="font-bold text-violet-700 hover:text-violet-900">Create the first admin account</Link></p>
           </form>
         </section>
       </div>

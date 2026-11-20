@@ -5,10 +5,9 @@ import { useEffect, useState } from 'react';
 import ProductCard from '../../(public)/components/ProductCard';
 import { useCart } from '../../(public)/components/CartProvider';
 import { Product } from '../../(public)/components/types/store';
-import productsData from '../../(public)/components/data/products.json';
 import { useBranding } from '../../(public)/components/BrandingProvider';
 
-export default function ProductDetails({ product }: { product?: Product }) {
+export default function ProductDetails({ product, relatedProducts = [] }: { product?: Product; relatedProducts?: Product[] }) {
   const [activeImage, setActiveImage] = useState(0);
   const [liked, setLiked] = useState(false);
   const [inWishlist, setInWishlist] = useState(false);
@@ -28,8 +27,8 @@ export default function ProductDetails({ product }: { product?: Product }) {
 
   if (!product) return <main className="py-24 text-center"><p className="font-semibold">Product not found.</p><Link href="/" className="mt-4 inline-block text-violet-700">Back to {brand.companyName}</Link></main>;
 
-  const gallery = product.detail_gallery_enabled ? (product.images || []).slice(0, 7) : (product.images || []).slice(0, 1);
-  const related = (productsData as Product[]).filter(p => p.category === product.category && p.id !== product.id).slice(0, 4);
+  const gallery = product.detail_gallery_enabled ? (product.images || []).slice(0, 4) : (product.images || []).slice(0, 1);
+  const related = relatedProducts.filter(p => p.id !== product.id).slice(0, 4);
 
   const toggleLike = () => {
     const likes: string[] = JSON.parse(localStorage.getItem('user_likes') || '[]');

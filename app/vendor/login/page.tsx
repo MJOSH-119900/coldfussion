@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { loginAction } from './actions';
 import { useToast } from '../../components/ToastProvider';
 import { useBranding } from '../../(public)/components/BrandingProvider';
+import PasswordInput from '../../components/PasswordInput';
 
 export default function VendorLogin() {
     const [email, setEmail] = useState('');
@@ -70,10 +71,10 @@ export default function VendorLogin() {
               Email address
               <input required value={email} onChange={e => setEmail(e.target.value)} type="email" autoComplete="username" placeholder="you@example.com" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"/>
             </label>
-            <label className="mt-5 block text-sm font-bold text-slate-700">
-              Password
-              <input required value={password} onChange={e => setPassword(e.target.value)} type="password" autoComplete="current-password" placeholder="Enter your password" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"/>
-            </label>
+            <div className="mt-5">
+              <label htmlFor="vendor-password" className="block text-sm font-bold text-slate-700">Password</label>
+              <PasswordInput id="vendor-password" required value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" placeholder="Enter your password" wrapperClassName="mt-2" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100" toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
+            </div>
             <div className="mt-2 text-right">
               <Link href="/vendor/password-reset" className="text-sm font-bold text-emerald-700 underline decoration-emerald-300 underline-offset-4 transition hover:text-emerald-900">Forgot password?</Link>
             </div>

@@ -1,10 +1,9 @@
-import fs from 'fs/promises';
 import path from 'path';
+import { uploadStoreAsset, deleteStoreAsset, deleteStoreAssetIfUnused } from '../server/storage';
 import type { BrandSettings } from '../app/(public)/components/types/store';
 import { readJson, updateJson } from './json-store';
 
 const DEFAULT_BRAND: BrandSettings = { companyName: 'Fussion', logo: '' };
-const BRAND_UPLOAD_DIR = path.resolve('./public/uploads/branding');
 
 export async function getBrandSettings(): Promise<BrandSettings> {
     const settings = await readJson<Record<string, unknown>>('site_settings.json', {});
@@ -41,10 +40,8 @@ export async function saveBrandSettings(companyName: string, file?: File, remove
         const isWebp = extension === '.webp' && bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP';
         if (!(isJpeg || isPng || isWebp)) throw new Error('The selected file is not a valid JPG, PNG or WEBP image.');
 
-        await fs.mkdir(BRAND_UPLOAD_DIR, { recursive: true });
         const fileName = `company-logo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`;
-        await fs.writeFile(path.join(BRAND_UPLOAD_DIR, fileName), bytes);
-        uploadedLogo = `/uploads/branding/${fileName}`;
+        uploadedLogo = await uploadStoreAsset(`branding/${fileName}`, bytes, file.type || 'application/octet-stream');
         logo = uploadedLogo;
     }
 
@@ -55,14 +52,14 @@ export async function saveBrandSettings(companyName: string, file?: File, remove
             company_logo: logo,
         }), {});
     } catch (error) {
-        if (uploadedLogo) await fs.rm(path.join(path.resolve('./public'), uploadedLogo), { force: true });
+        if (uploadedLogo) await deleteStoreAsset(uploadedLogo);
         throw error;
     }
 
     if (current.logo && current.logo !== logo) {
         const previousFileName = current.logo.slice('/uploads/branding/'.length);
         if (previousFileName && path.basename(previousFileName) === previousFileName) {
-            await fs.rm(path.join(BRAND_UPLOAD_DIR, previousFileName), { force: true });
+            await deleteStoreAssetIfUnused(`branding/${previousFileName}`);
         }
     }
 

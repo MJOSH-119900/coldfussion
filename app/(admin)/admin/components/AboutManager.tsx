@@ -5,6 +5,7 @@ import AboutPortraitPlaceholder from '../../../(public)/components/AboutPortrait
 import type { OwnerAbout } from '../../../(public)/components/types/store';
 import { useToast } from '../../../components/ToastProvider';
 import { saveOwnerAboutAction } from '../actions';
+import { optimizeImageInput } from '../../../../lib/image-optimizer';
 
 export default function AboutManager({ initialProfile }: { initialProfile: OwnerAbout }) {
     const [profile, setProfile] = useState(initialProfile);
@@ -77,8 +78,12 @@ export default function AboutManager({ initialProfile }: { initialProfile: Owner
 
                     <label className="block text-sm font-semibold text-slate-700">
                         Profile photo <span className="font-normal text-slate-400">(optional)</span>
-                        <input name="image_file" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={event => {
-                            const file = event.currentTarget.files?.[0];
+                        <input name="image_file" type="file" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp" onChange={async event => {
+                            const input = event.currentTarget;
+                            input.disabled = true;
+                            try { await optimizeImageInput(input); } catch (error) { input.value = ''; notify('error', error instanceof Error ? error.message : 'Could not prepare the profile image.', 'Image preparation failed'); }
+                            finally { input.disabled = false; }
+                            const file = input.files?.[0];
                             setImageFileSelected(Boolean(file));
                             setRemoveImage(false);
                             setPreview(file ? URL.createObjectURL(file) : profile.image);

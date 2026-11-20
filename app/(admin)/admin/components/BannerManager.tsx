@@ -4,6 +4,7 @@ import { FormEvent, useState, useTransition } from 'react';
 import { BannerIntervalUnit, BannerSettings, BannerSlide } from '../../../(public)/components/types/store';
 import { useToast } from '../../../components/ToastProvider';
 import { deleteBannerAction, saveBannerAction, saveBannerIntervalAction } from '../actions';
+import { optimizeImageInput } from '../../../../lib/image-optimizer';
 
 export default function BannerManager({ initialSettings }: { initialSettings: BannerSettings }) {
     const [slides, setSlides] = useState(initialSettings.slides);
@@ -145,6 +146,7 @@ export default function BannerManager({ initialSettings }: { initialSettings: Ba
                             type="file"
                             accept=".jpg,.jpeg,.png,.webp,.gif,.avif,image/*"
                             required={!editing}
+                            onChange={async event => { const input = event.currentTarget; input.disabled = true; try { await optimizeImageInput(input); } catch (error) { input.value = ''; notify('error', error instanceof Error ? error.message : 'Could not prepare the banner image.', 'Image preparation failed'); } finally { input.disabled = false; } }}
                             className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
                         />
                         <span className="mt-1 block text-xs font-normal text-slate-500">JPG, PNG, WEBP, GIF or AVIF · maximum 12 MB.</span>

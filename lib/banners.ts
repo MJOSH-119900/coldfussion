@@ -1,5 +1,5 @@
-import fs from 'fs/promises';
 import path from 'path';
+import { uploadStoreAsset, deleteStoreAsset, deleteStoreAssetIfUnused } from '../server/storage';
 import type { BannerIntervalUnit, BannerSettings, BannerSlide } from '../app/(public)/components/types/store';
 import { nextId, readJson, updateJson } from './json-store';
 
@@ -9,7 +9,6 @@ const DEFAULT_SETTINGS: BannerSettings = {
     intervalUnit: 'seconds',
 };
 
-const BANNER_UPLOAD_DIR = path.resolve('./public/uploads/banners');
 
 export async function getBannerSettings(): Promise<BannerSettings> {
     const settings = await readJson<Record<string, unknown>>('site_settings.json', {});
@@ -73,10 +72,8 @@ export async function saveBanner(
             throw new Error('The selected file is not a valid image matching its extension.');
         }
 
-        await fs.mkdir(BANNER_UPLOAD_DIR, { recursive: true });
         const fileName = `banner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`;
-        await fs.writeFile(path.join(BANNER_UPLOAD_DIR, fileName), bytes);
-        uploadedPath = `/uploads/banners/${fileName}`;
+        uploadedPath = await uploadStoreAsset(`banners/${fileName}`, bytes, input.file.type || 'application/octet-stream');
         image = uploadedPath;
     }
 
@@ -100,12 +97,12 @@ export async function saveBanner(
             };
         }, {});
     } catch (error) {
-        if (uploadedPath) await fs.rm(path.join(path.resolve('./public'), uploadedPath), { force: true });
+        if (uploadedPath) await deleteStoreAsset(uploadedPath);
         throw error;
     }
 
     if (existing && existing.image !== image && existing.image.startsWith('/uploads/banners/')) {
-        await fs.rm(path.join(path.resolve('./public'), existing.image), { force: true });
+        await deleteStoreAssetIfUnused(existing.image);
     }
     return slide;
 }
@@ -121,7 +118,7 @@ export async function removeBanner(id: string): Promise<void> {
     }, {});
 
     if (target.image.startsWith('/uploads/banners/')) {
-        await fs.rm(path.join(path.resolve('./public'), target.image), { force: true });
+        await deleteStoreAssetIfUnused(target.image);
     }
 }
 

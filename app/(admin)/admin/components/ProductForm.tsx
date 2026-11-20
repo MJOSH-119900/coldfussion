@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { Product } from '../../../(public)/components/types/store';
 import { saveProductAction } from '../actions';
 import { useToast } from '../../../components/ToastProvider';
+import { optimizeImageInput } from '../../../../lib/image-optimizer';
 interface FormProps {
     currentVendorId: string;
     editProduct?: Product;
@@ -56,12 +57,12 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     </div>
 
     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
-      <label className="mb-1 block text-sm font-bold text-slate-800">Product photos (up to 7)</label>
-      <p className="mb-3 text-xs text-slate-500">The first image is the main listing image. Upload up to 7 pictures, maximum 12 MB each. Supported files: JPG, JPEG, PNG, WEBP, GIF or AVIF. Use the original picture file, not a web-page link, PDF, HEIC or SVG.</p>
+      <label className="mb-1 block text-sm font-bold text-slate-800">Product photos (up to 4)</label>
+      <p className="mb-3 text-xs text-slate-500">The first image is the main listing image. Upload up to 4 pictures. Supported files: JPG, JPEG, PNG, WEBP, GIF or AVIF. Use the original picture file, not a web-page link, PDF, HEIC or SVG.</p>
       {!isAdmin && <p className="mb-3 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-xs leading-5 text-violet-900">Photo tip: Use sharp, well-lit pictures of the actual item, with a clean background and a few helpful angles. Quality photos can build trust and attract more buyers.</p>}
-      <input type="file" name="image_files" accept=".jpg,.jpeg,.png,.webp,.gif,.avif,image/jpeg,image/png,image/webp,image/gif,image/avif" multiple onChange={e => setSelectedCount(e.target.files?.length || 0)} className="w-full text-sm"/>
-      <p className="mt-2 text-xs text-slate-500">{selectedCount ? `${selectedCount} new image(s) selected` : editProduct ? `${editProduct.images?.length || 0} current image(s)` : 'No images selected yet'}</p>
-      {editProduct?.images?.length ? <div className="mt-3 flex flex-wrap gap-2">{editProduct.images.slice(0, 7).map((src, i) => <img key={`${src}-${i}`} src={src} alt={`Current product image ${i + 1}`} className="h-14 w-14 rounded-lg border object-cover"/>)}</div> : null}
+      <input type="file" name="image_files" accept=".jpg,.jpeg,.png,.webp,.gif,.avif,image/jpeg,image/png,image/webp,image/gif,image/avif" multiple onChange={async e => { const input = e.currentTarget; setSelectedCount(-1); input.disabled = true; try { const files = await optimizeImageInput(input); setSelectedCount(files.length); } catch (error) { input.value = ''; setSelectedCount(0); notify('error', error instanceof Error ? error.message : 'Could not optimize the selected images.', 'Image preparation failed'); } finally { input.disabled = false; } }} className="w-full text-sm"/>
+      <p className="mt-2 text-xs text-slate-500">{selectedCount < 0 ? 'Optimizing selected images…' : selectedCount ? `${selectedCount} WebP image(s) selected · 80% quality, max 1200px; usually 40–150 KB (500 KB ceiling)` : editProduct ? `${editProduct.images?.length || 0} current image(s)` : 'Images are resized to at most 1200px and converted to WebP at 80% quality before upload.'}</p>
+      {editProduct?.images?.length ? <div className="mt-3 flex flex-wrap gap-2">{editProduct.images.slice(0, 4).map((src, i) => <img key={`${src}-${i}`} src={src} alt={`Current product image ${i + 1}`} className="h-14 w-14 rounded-lg border object-cover"/>)}</div> : null}
     </div>
 
     <div className="space-y-3 rounded-xl border border-slate-200 p-4">
@@ -84,7 +85,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     <div className="space-y-3 rounded-xl border border-slate-200 p-4">
       <p className="text-sm font-bold text-slate-800">Availability & storefront</p>
       <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_available" value="true" defaultChecked={editProduct?.is_available ?? true}/> Product available for enquiry/cart</label>
-      <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="detail_gallery_enabled" value="true" defaultChecked={editProduct?.detail_gallery_enabled ?? false}/><span><strong>Enable product gallery</strong><span className="block text-xs text-slate-500">Show up to 7 photos on the detail page.</span></span></label>
+      <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="detail_gallery_enabled" value="true" defaultChecked={editProduct?.detail_gallery_enabled ?? false}/><span><strong>Enable product gallery</strong><span className="block text-xs text-slate-500">Show up to 4 photos on the detail page.</span></span></label>
       <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_latest" value="true" defaultChecked={editProduct?.is_latest ?? false}/> Feature in Latest Drops</label>
       {isAdmin && <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_top_selling" value="true" defaultChecked={editProduct?.is_top_selling ?? false}/> Feature in Top Sellers (admin only)</label>}
       <label className="flex items-center gap-3 text-sm font-semibold text-emerald-700"><input type="checkbox" name="giveaway" value="true" defaultChecked={editProduct?.giveaway ?? false}/> Announce this item as a giveaway</label>
@@ -104,7 +105,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
         <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4 transition-transform group-hover:rotate-90"><path strokeLinecap="round" strokeLinejoin="round" d="m6 6 12 12M18 6 6 18"/></svg>
         <span>Cancel edit</span>
       </button>}
-      <button type="submit" disabled={loading} className="w-full rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-violet-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{loading ? 'Saving product...' : editProduct ? 'Save product changes' : 'Publish product'}</button>
+      <button type="submit" disabled={loading || selectedCount < 0} className="w-full rounded-xl bg-slate-950 px-5 py-3 font-semibold text-white shadow-sm transition hover:bg-violet-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{selectedCount < 0 ? 'Optimizing photos...' : loading ? 'Saving product...' : editProduct ? 'Save product changes' : 'Publish product'}</button>
     </div>
     </div>
   </form>;

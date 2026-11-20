@@ -1,20 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState, useTransition } from 'react';
-import productsData from '../../(public)/components/data/products.json';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { Product } from '../../(public)/components/types/store';
 import ProductForm from './components/ProductForm';
-import { deleteProductAction } from './actions';
+import { deleteProductAction, getProductsAction } from './actions';
 
 const SESSION = { role: 'admin' as const, vendor_id: 'vendor_alpha' };
 const nav = ['Overview', 'Products', 'Giveaways'];
 
 export default function DashboardPortal() {
-  const [allProducts, setAllProducts] = useState<Product[]>(productsData as Product[]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [editingProduct, setEditingProduct] = useState<Product | undefined>();
   const [section, setSection] = useState('Products');
   const [isPending, startTransition] = useTransition();
+  useEffect(() => { void getProductsAction().then(setAllProducts); }, []);
   const filteredProducts = useMemo(() => SESSION.role === 'admin' ? allProducts : allProducts.filter(p => p.vendor_id === SESSION.vendor_id), [allProducts]);
 
   const refresh = (savedProduct: Product) => {

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Product } from '../../../(public)/components/types/store';
 import { saveProductAction } from '../actions';
+import { optimizeImageInput } from '../../../../lib/image-optimizer';
 
 interface FormProps { currentVendorId: string; editProduct?: Product; onSuccess: (product: Product) => void; }
 
@@ -34,17 +35,17 @@ export default function ProductForm({ currentVendorId, editProduct, onSuccess }:
     </div>
 
     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
-      <label className="mb-1 block text-sm font-bold text-slate-800">Product photos (up to 7)</label>
+      <label className="mb-1 block text-sm font-bold text-slate-800">Product photos (up to 4)</label>
       <p className="mb-3 text-xs text-slate-500">The first image is the main listing image.</p>
-      <input type="file" name="image_files" accept="image/*" multiple onChange={e => setSelectedCount(e.target.files?.length || 0)} className="w-full text-sm" />
+      <input type="file" name="image_files" accept="image/*" multiple onChange={async e => { const input=e.currentTarget; try { const files=await optimizeImageInput(input); setSelectedCount(files.length); } catch { input.value=''; setSelectedCount(0); } }} className="w-full text-sm" />
       <p className="mt-2 text-xs text-slate-500">{selectedCount ? `${selectedCount} new image(s) selected` : editProduct ? `${editProduct.images?.length || 0} current image(s)` : 'No images selected yet'}</p>
-      {editProduct?.images?.length ? <div className="mt-3 flex flex-wrap gap-2">{editProduct.images.slice(0, 7).map((src, i) => <img key={`${src}-${i}`} src={src} alt={`Current product image ${i + 1}`} className="h-14 w-14 rounded-lg border object-cover" />)}</div> : null}
+      {editProduct?.images?.length ? <div className="mt-3 flex flex-wrap gap-2">{editProduct.images.slice(0, 4).map((src, i) => <img key={`${src}-${i}`} src={src} alt={`Current product image ${i + 1}`} className="h-14 w-14 rounded-lg border object-cover" />)}</div> : null}
     </div>
 
     <div className="space-y-3 rounded-xl border border-slate-200 p-4">
       <p className="text-sm font-bold text-slate-800">Availability & storefront</p>
       <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_available" value="true" defaultChecked={editProduct?.is_available ?? true} /> Product available for enquiry/cart</label>
-      <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="detail_gallery_enabled" value="true" defaultChecked={editProduct?.detail_gallery_enabled ?? false} /><span><strong>Enable product gallery</strong><span className="block text-xs text-slate-500">Show up to 7 photos on the detail page.</span></span></label>
+      <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="detail_gallery_enabled" value="true" defaultChecked={editProduct?.detail_gallery_enabled ?? false} /><span><strong>Enable product gallery</strong><span className="block text-xs text-slate-500">Show up to 4 photos on the detail page.</span></span></label>
       <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_latest" value="true" defaultChecked={editProduct?.is_latest ?? false} /> Feature in Latest Drops</label>
       <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_top_selling" value="true" defaultChecked={editProduct?.is_top_selling ?? false} /> Feature in Top Sellers</label>
       <label className="flex items-center gap-3 text-sm font-semibold text-emerald-700"><input type="checkbox" name="giveaway" value="true" defaultChecked={editProduct?.giveaway ?? false} /> Announce this item as a giveaway</label>

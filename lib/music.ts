@@ -1,5 +1,6 @@
-import fs from 'fs/promises';
 import path from 'path';
+import { uploadStoreAsset, deleteStoreAsset, deleteStoreAssetIfUnused } from '../server/storage';
+import { createSupabaseAdminClient } from '../server/supabase-admin';
 import { nextId, readJson, writeJson } from './json-store';
 
 export interface MusicTrack {
@@ -9,8 +10,8 @@ export interface MusicTrack {
     created_at: string;
 }
 
-export const MUSIC_UPLOAD_DIR = path.resolve('./public/uploads/music');
-export const MAX_MUSIC_FILE_SIZE = 50 * 1024 * 1024;
+export const MAX_MUSIC_FILE_SIZE = 10 * 1024 * 1024;
+export const MAX_MUSIC_LIBRARY_BYTES = 10 * 1024 * 1024;
 
 export interface MusicSettings { enabled: boolean; updated_at: string | null }
 
@@ -36,7 +37,7 @@ export async function saveMusicTrack(file: File, title: string): Promise<MusicTr
     }
 
     if (file.size > MAX_MUSIC_FILE_SIZE) {
-        throw new Error('Audio files must be 50 MB or smaller.');
+        throw new Error('Audio files must be 10 MB or smaller.');
     }
 
     const extension = path.extname(file.name).toLowerCase();
@@ -57,24 +58,39 @@ export async function saveMusicTrack(file: File, title: string): Promise<MusicTr
     }
 
     const cleanTitle = title.trim() || path.basename(file.name, extension);
+    await pruneUnusedMusicAssets();
+    const storage = createSupabaseAdminClient().storage.from('store-assets');
+    let totalBytes = 0;
+    for (let offset = 0; ; offset += 100) {
+        const { data, error } = await storage.list('music', { limit: 100, offset });
+        if (error) throw new Error(`Could not check the music storage limit: ${error.message}`);
+        for (const item of data ?? []) totalBytes += Number(item.metadata?.size ?? 0);
+        if (!data || data.length < 100) break;
+    }
+    if (totalBytes + file.size > MAX_MUSIC_LIBRARY_BYTES) {
+        const remaining = Math.max(0, MAX_MUSIC_LIBRARY_BYTES - totalBytes);
+        throw new Error(`The music library is limited to 10 MB total. It currently uses ${(totalBytes / 1024 / 1024).toFixed(2)} MB, leaving ${(remaining / 1024 / 1024).toFixed(2)} MB.`);
+    }
+
     const id = await nextId('MUS', 4, 'musicTrack');
     const fileName = `${id}-${Date.now()}${extension}`;
 
-    await fs.mkdir(MUSIC_UPLOAD_DIR, { recursive: true });
-    await fs.writeFile(
-        path.join(MUSIC_UPLOAD_DIR, fileName),
-        bytes,
-    );
+    const storagePath = await uploadStoreAsset(`music/${fileName}`, bytes, file.type || 'application/octet-stream', MAX_MUSIC_FILE_SIZE);
 
     const track: MusicTrack = {
         id,
         title: cleanTitle,
-        file: `/uploads/music/${fileName}`,
+        file: storagePath,
         created_at: new Date().toISOString(),
     };
 
     const tracks = await getMusicTracks();
-    await writeJson('music.json', [...tracks, track]);
+    try {
+        await writeJson('music.json', [...tracks, track]);
+    } catch (error) {
+        await deleteStoreAsset(storagePath);
+        throw error;
+    }
     return track;
 }
 
@@ -86,14 +102,26 @@ export async function deleteMusicTrack(trackId: string): Promise<void> {
         throw new Error('Music track not found.');
     }
 
-    if (track.file.startsWith('/uploads/music/')) {
-        await fs.rm(path.join(path.resolve('./public'), track.file), {
-            force: true,
-        });
-    }
-
     await writeJson(
         'music.json',
         tracks.filter((item) => item.id !== trackId),
     );
+    if (track.file.startsWith('/uploads/music/')) await deleteStoreAssetIfUnused(track.file);
+    await pruneUnusedMusicAssets();
+}
+
+export async function pruneUnusedMusicAssets() {
+    const referenced = new Set((await getMusicTracks()).map(track => track.file.replace(/^\/uploads\//, '')));
+    const storage = createSupabaseAdminClient().storage.from('store-assets');
+    const unused: string[] = [];
+    for (let offset = 0; ; offset += 100) {
+        const { data, error } = await storage.list('music', { limit: 100, offset });
+        if (error) throw new Error(`Could not inspect music storage: ${error.message}`);
+        unused.push(...(data ?? []).filter(item => item.id && !referenced.has(`music/${item.name}`)).map(item => `music/${item.name}`));
+        if (!data || data.length < 100) break;
+    }
+    for (let index = 0; index < unused.length; index += 100) {
+        const { error } = await storage.remove(unused.slice(index, index + 100));
+        if (error) throw new Error(`Could not remove unused music files: ${error.message}`);
+    }
 }

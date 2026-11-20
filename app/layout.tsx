@@ -6,6 +6,11 @@ import { ToastProvider } from "./components/ToastProvider";
 import StorefrontShell from "./(public)/components/StorefrontShell";
 import { BrandingProvider } from "./(public)/components/BrandingProvider";
 import { getBrandSettings } from "../lib/branding";
+
+// Store content comes from Supabase and must be read at request time, not
+// during Next.js static prerendering.
+export const dynamic = "force-dynamic";
+
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 const manrope = Manrope({ variable: "--font-manrope", subsets: ["latin"] });

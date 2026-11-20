@@ -2,13 +2,12 @@ import { createHash, randomUUID } from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { strToU8, unzipSync, zipSync, type Zippable } from 'fflate';
-import { dataPath, readJson, writeJson, type JsonFileName } from './json-store';
+import { readJson, writeJson, type JsonFileName } from './json-store';
 
 const DATA_FILES: JsonFileName[] = [
     'vendors.json',
     'vendor_requests.json',
     'products.json',
-    'users_auth.json',
     'orders.json',
     'analytics.json',
     'counters.json',
@@ -62,7 +61,7 @@ function isValidArchivePath(name: string) {
     if (!name || name.startsWith('/') || name.includes('\\') || name.includes('\0') || name.includes(':'))
         return false;
     if (name.startsWith('data/'))
-        return DATA_FILES.includes(name.slice('data/'.length) as JsonFileName);
+        return DATA_FILES.includes(name.slice('data/'.length) as JsonFileName) || name === 'data/users_auth.json';
     return isValidUploadPath(name);
 }
 
@@ -113,16 +112,8 @@ export async function createAdminBackup() {
     };
 
     for (const name of DATA_FILES) {
-        let contents: Buffer;
-        try {
-            contents = await fs.readFile(dataPath(name));
-        }
-        catch (error) {
-            if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
-                throw error;
-            await readJson<unknown>(name);
-            contents = await fs.readFile(dataPath(name));
-        }
+        const value = await readJson<unknown>(name);
+        const contents = Buffer.from(JSON.stringify(value, null, 2), 'utf8');
         const bytes = new Uint8Array(contents);
         parseDataFile(name, bytes);
         addFile(`data/${name}`, bytes);
@@ -157,8 +148,8 @@ function parseDataFile(name: string, bytes: Uint8Array): unknown {
             throw new InvalidAdminBackupError(`Backup contains invalid data: ${name}`);
     }
     else if (name === 'users_auth.json') {
-        if (!isRecord(value) || Object.values(value).some(entry => !isRecord(entry)))
-            throw new InvalidAdminBackupError('Backup contains invalid account data.');
+        if (!isRecord(value))
+            throw new InvalidAdminBackupError('Backup contains invalid legacy account data.');
     }
     else if (!Array.isArray(value)) {
         throw new InvalidAdminBackupError(`Backup contains invalid data: ${name}`);
@@ -204,28 +195,7 @@ function parseManifest(bytes: Uint8Array, fileNames: Set<string>): BackupManifes
 }
 
 async function snapshotJsonFile(name: JsonFileName): Promise<{ exists: boolean; value?: unknown }> {
-    try {
-        const contents = await fs.readFile(dataPath(name), 'utf8');
-        return { exists: true, value: JSON.parse(contents) as unknown };
-    }
-    catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT')
-            return { exists: false };
-        throw error;
-    }
-}
-
-function bumpRestoredSessionVersions(value: unknown) {
-    if (!isRecord(value))
-        throw new InvalidAdminBackupError('Backup account data is invalid.');
-    for (const [key, record] of Object.entries(value)) {
-        if (!isRecord(record))
-            throw new InvalidAdminBackupError(`Backup account record is invalid: ${key}`);
-        const currentVersion = Number(record.session_version);
-        record.session_version = Number.isSafeInteger(currentVersion) && currentVersion >= 0
-            ? currentVersion + 1
-            : 1;
-    }
+    return { exists: true, value: await readJson<unknown>(name) };
 }
 
 export async function restoreAdminBackup(archive: Uint8Array) {
@@ -276,10 +246,6 @@ export async function restoreAdminBackup(archive: Uint8Array) {
             ...(name.startsWith('data/') ? { jsonValue: parseDataFile(name.slice('data/'.length), bytes) } : {}),
         });
     }
-    const users = restoredFiles.get('data/users_auth.json')?.jsonValue;
-    if (users)
-        bumpRestoredSessionVersions(users);
-
     const originalData = new Map<JsonFileName, { exists: boolean; value?: unknown }>();
     for (const name of [...DATA_FILES, 'auth_otps.json'] as JsonFileName[])
         originalData.set(name, await snapshotJsonFile(name));
@@ -335,10 +301,7 @@ export async function restoreAdminBackup(archive: Uint8Array) {
         for (const name of [...writtenData].reverse()) {
             try {
                 const original = originalData.get(name)!;
-                if (original.exists)
-                    await writeJson(name, original.value, false);
-                else
-                    await fs.rm(dataPath(name), { force: true });
+                await writeJson(name, original.value, false);
             }
             catch (rollbackError) {
                 rollbackErrors.push(`${name}: ${rollbackError instanceof Error ? rollbackError.message : 'rollback failed'}`);

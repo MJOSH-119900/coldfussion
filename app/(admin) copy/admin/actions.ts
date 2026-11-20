@@ -1,119 +1,51 @@
 'use server';
 
-import fs from 'fs/promises';
-import { createHash } from 'crypto';
 import path from 'path';
 import { revalidatePath } from 'next/cache';
 import { Product } from '../../(public)/components/types/store';
+import { readJson, writeJson } from '../../../lib/json-store';
+import { requireAdmin } from '../../../lib/auth';
+import { deleteStoreAssetIfUnused, uploadStoreAsset } from '../../../server/storage';
 
-const PRODUCTS_FILE = path.resolve('./app/(public)/components/data/products.json');
-const UPLOAD_DIR = path.resolve('./public/uploads');
-const VENDORS_FILE = path.resolve('./app/(public)/components/data/vendors.json');
-const USERS_AUTH_FILE = path.resolve('./app/(public)/components/data/users_auth.json');
-const REQUESTS_FILE = path.resolve('./app/(public)/components/data/vendor_requests.json');
-
-// Helper to generate a secure random alphanumeric temporary password
-function generateRandomPassword(length = 10): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$';
-  let password = '';
-  for (let i = 0; i < length; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return password;
-}
-
-// Action: Create and approve a vendor profile from the Admin UI Page
-export async function createVendorFromRequestAction(requestId: string) {
-  try {
-    // 1. Read files
-    const requestsData = await fs.readFile(REQUESTS_FILE, 'utf-8').catch(() => '[]');
-    const vendorsData = await fs.readFile(VENDORS_FILE, 'utf-8').catch(() => '[]');
-    const authData = await fs.readFile(USERS_AUTH_FILE, 'utf-8').catch(() => '{}');
-
-    const requests: any[] = JSON.parse(requestsData);
-    const vendors: any[] = JSON.parse(vendorsData);
-    const authTable: Record<string, any> = JSON.parse(authData);
-
-    // 2. Find the target request profile
-    const targetRequest = requests.find(r => r.request_id === requestId);
-    if (!targetRequest) throw new Error('Request not found in pool');
-
-    const uniqueVendorId = `vendor-${Date.now()}`;
-    const generatedPassword = generateRandomPassword();
-
-    // 3. Create the vendor record profile
-    const newVendorProfile = {
-      vendor_id: uniqueVendorId,
-      business_name: targetRequest.business_name,
-      whatsapp_number: targetRequest.whatsapp_number,
-      email: targetRequest.email.toLowerCase(),
-      status: 'approved',
-      created_at: new Date().toISOString()
-    };
-
-    // 4. Create the authentication profile wrapper
-    authTable[targetRequest.email.toLowerCase()] = {
-      role: 'vendor',
-      vendor_id: uniqueVendorId,
-      password: createHash('sha256').update(generatedPassword).digest('hex'), // Never store or return the plaintext password
-      current_otp: null,
-      otp_expires_at: null,
-      status: 'active'
-    };
-
-    // 5. Append data and filter out the handled request queue item
-    vendors.push(newVendorProfile);
-    const remainingRequests = requests.filter(r => r.request_id !== requestId);
-
-    // 6. Write changes back to the exact project path locations
-    await fs.writeFile(VENDORS_FILE, JSON.stringify(vendors, null, 2), 'utf-8');
-    await fs.writeFile(USERS_AUTH_FILE, JSON.stringify(authTable, null, 2), 'utf-8');
-    await fs.writeFile(REQUESTS_FILE, JSON.stringify(remainingRequests, null, 2), 'utf-8');
-
-    revalidatePath('/admin');
-    return { success: true };
-  } catch (error: any) {
-    console.error('Failed to provision vendor credentials:', error);
-    return { success: false, error: error.message };
-  }
-}
 
 async function readProductsFile(): Promise<Product[]> {
-  try {
-    const fileData = await fs.readFile(PRODUCTS_FILE, 'utf-8');
-    return JSON.parse(fileData || '[]');
-  } catch (error: any) {
-    if (error.code === 'ENOENT') return [];
-    throw error;
-  }
+  return readJson<Product[]>('products.json', []);
+}
+
+export async function getProductsAction() {
+  await requireAdmin();
+  return readJson<Product[]>('products.json', []);
 }
 
 
 export async function saveProductAction(formData: FormData, vendorId: string, productId?: string) {
+  await requireAdmin();
   const products = await readProductsFile();
   const existing = productId ? products.find(p => p.id === productId) : undefined;
+  const productRecordId = existing?.id || productId || `prod-${Date.now()}`;
+  const ownerVendorId = existing?.vendor_id || vendorId;
   const uploadedFiles = formData.getAll('image_files').filter((value): value is File => value instanceof File && value.size > 0);
   const uploadedImages: string[] = [];
 
   if (uploadedFiles.length) {
-    await fs.mkdir(UPLOAD_DIR, { recursive: true });
-    for (const imageFile of uploadedFiles.slice(0, 7)) {
+    if (uploadedFiles.length > 4) throw new Error('Upload a maximum of 4 product photos at a time.');
+    for (const imageFile of uploadedFiles.slice(0, 4)) {
+      if (imageFile.size > 500 * 1024) throw new Error('Images must be 500 KB or smaller after browser optimization.');
       const extension = path.extname(imageFile.name).toLowerCase() || '.jpg';
       const safeExtension = /^\.(jpg|jpeg|png|webp|gif|avif)$/.test(extension) ? extension : '.jpg';
-      const fileName = `${vendorId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${safeExtension}`;
-      await fs.writeFile(path.join(UPLOAD_DIR, fileName), Buffer.from(await imageFile.arrayBuffer()));
-      uploadedImages.push(`/uploads/${fileName}`);
+      const fileName = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${safeExtension}`;
+      uploadedImages.push(await uploadStoreAsset(`${ownerVendorId}/products/${productRecordId}/${fileName}`, Buffer.from(await imageFile.arrayBuffer()), imageFile.type || 'application/octet-stream'));
     }
   }
 
-  const images = (uploadedImages.length ? uploadedImages : existing?.images || []).slice(0, 7);
+  const images = (uploadedImages.length ? uploadedImages : existing?.images || []).slice(0, 4);
   const availableQuantity = Math.max(0, Number(formData.get('available_quantity') || 0));
   const compareAtRaw = Number(formData.get('compare_at_price') || 0);
   const compareAt = compareAtRaw > Number(formData.get('price') || 0) ? compareAtRaw : undefined;
 
   const productData: Product = {
-    id: productId || `prod-${Date.now()}`,
-    vendor_id: existing?.vendor_id || vendorId,
+    id: productRecordId,
+    vendor_id: ownerVendorId,
     title: String(formData.get('title') || ''),
     description: String(formData.get('description') || ''),
     price: Number(formData.get('price') || 0),
@@ -136,7 +68,8 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
     ? products.map(p => p.id === productId ? productData : p)
     : [...products, productData];
 
-  await fs.writeFile(PRODUCTS_FILE, JSON.stringify(updatedProducts, null, 2), 'utf-8');
+  await writeJson('products.json', updatedProducts);
+  if (existing) await Promise.all(existing.images.filter(image => image.startsWith('/uploads/') && !productData.images.includes(image)).map(deleteStoreAssetIfUnused));
   revalidatePath('/');
   revalidatePath('/admin');
   if (productId) revalidatePath(`/product/${productId}`);
@@ -144,21 +77,13 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
 }
 
 export async function deleteProductAction(id: string) {
+  await requireAdmin();
   const products = await readProductsFile();
   const targetProduct = products.find(p => p.id === id);
 
-  // Optional: Clean up disk storage when product is deleted
-  if (targetProduct && targetProduct.images[0]?.startsWith('/uploads/')) {
-    try {
-      const absoluteImagePath = path.join(path.resolve('./public'), targetProduct.images[0]);
-      await fs.unlink(absoluteImagePath);
-    } catch (e) {
-      console.log('File already deleted or missing from disk storage');
-    }
-  }
-
   const filtered = products.filter(p => p.id !== id);
-  await fs.writeFile(PRODUCTS_FILE, JSON.stringify(filtered, null, 2), 'utf-8');
+  await writeJson('products.json', filtered);
+  if (targetProduct) await Promise.all(targetProduct.images.filter(image => image.startsWith('/uploads/')).map(deleteStoreAssetIfUnused));
   revalidatePath('/');
   revalidatePath('/admin');
   return { success: true };

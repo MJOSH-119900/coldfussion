@@ -1,9 +1,8 @@
-import fs from 'fs/promises';
 import path from 'path';
+import { uploadStoreAsset, deleteStoreAsset, deleteStoreAssetIfUnused } from '../server/storage';
 import type { OwnerAbout } from '../app/(public)/components/types/store';
 import { readJson, updateJson } from './json-store';
 
-const ABOUT_UPLOAD_DIR = path.resolve('./public/uploads/about');
 const ABOUT_IMAGE_PREFIX = '/uploads/about/';
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const DEMO_ABOUT: OwnerAbout = {
@@ -32,7 +31,7 @@ function cleanupPreviousImage(image: string, nextImage: string) {
         return;
     const fileName = image.slice(ABOUT_IMAGE_PREFIX.length);
     if (fileName && path.basename(fileName) === fileName)
-        return fs.rm(path.join(ABOUT_UPLOAD_DIR, fileName), { force: true });
+        return deleteStoreAssetIfUnused(`about/${fileName}`);
 }
 
 export async function getOwnerAbout(): Promise<OwnerAbout> {
@@ -85,11 +84,9 @@ export async function saveOwnerAbout(formData: FormData): Promise<OwnerAbout> {
         if (!validAboutImage(file, bytes))
             throw new Error('Use a valid JPG, PNG or WEBP profile image.');
 
-        await fs.mkdir(ABOUT_UPLOAD_DIR, { recursive: true });
         const extension = path.extname(file.name).toLowerCase();
         const fileName = `owner-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${extension}`;
-        await fs.writeFile(path.join(ABOUT_UPLOAD_DIR, fileName), bytes);
-        uploadedImage = `${ABOUT_IMAGE_PREFIX}${fileName}`;
+        uploadedImage = await uploadStoreAsset(`about/${fileName}`, bytes, file.type || 'application/octet-stream');
         image = uploadedImage;
     }
 
@@ -101,7 +98,7 @@ export async function saveOwnerAbout(formData: FormData): Promise<OwnerAbout> {
         }), {});
     } catch (error) {
         if (uploadedImage)
-            await fs.rm(path.join(ABOUT_UPLOAD_DIR, uploadedImage.slice(ABOUT_IMAGE_PREFIX.length)), { force: true });
+            await deleteStoreAsset(uploadedImage);
         throw error;
     }
 

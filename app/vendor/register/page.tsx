@@ -5,6 +5,8 @@ import Image from 'next/image';
 import { registerVendorAction } from '../../(admin)/admin/actions';
 import { useToast } from '../../components/ToastProvider';
 import { useBranding } from '../../(public)/components/BrandingProvider';
+import PasswordInput from '../../components/PasswordInput';
+import { optimizeImageInput } from '../../../lib/image-optimizer';
 
 const businessFields = [
     { name: 'business_name', label: 'Business name', type: 'text', placeholder: 'Your store or business name', autoComplete: 'organization' },
@@ -16,6 +18,7 @@ const businessFields = [
 ] as const;
 
 const fieldClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100';
+const passwordFieldClass = fieldClass.replace(/^mt-2\s+/, '');
 
 export default function VendorRegister() {
     const { notify } = useToast();
@@ -24,6 +27,7 @@ export default function VendorRegister() {
     const [done, setDone] = useState(false);
     const [error, setError] = useState('');
     const [whatsappUrl, setWhatsappUrl] = useState('');
+    const [emailConfirmationRequired, setEmailConfirmationRequired] = useState(true);
 
     async function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -40,6 +44,7 @@ export default function VendorRegister() {
             }
             setDone(true);
             setWhatsappUrl(result.whatsappUrl || '');
+            setEmailConfirmationRequired(Boolean(result.needsEmailConfirmation));
             notify('success', 'Your seller application is waiting for admin approval.', 'Application submitted');
         }
         catch (err) {
@@ -83,7 +88,7 @@ export default function VendorRegister() {
             {done ? <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 sm:p-8">
               <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-xl font-black text-emerald-700" aria-hidden="true">✓</span>
               <h2 className="mt-4 text-2xl font-black text-emerald-950">Application received</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-emerald-900">Your application is saved and pending administrator review. You’ll be able to sign in after your seller account is approved.</p>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-emerald-900">Your application is saved and pending administrator review. {emailConfirmationRequired ? 'Confirm your email using the link we sent. ' : ''}You can sign in after your seller account is approved.</p>
               {whatsappUrl
                 ? <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className="mt-6 inline-flex rounded-xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-200">Share application on WhatsApp ↗</a>
                 : <p className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Admin WhatsApp is not configured. Your application is saved and visible to the administrator.</p>}
@@ -109,18 +114,18 @@ export default function VendorRegister() {
 
               <section aria-labelledby="seller-security-heading" className="border-t border-slate-100 pt-8">
                 <div className="mb-5">
-                  <h2 id="seller-security-heading" className="text-lg font-black text-slate-900">Account security</h2>
-                  <p className="mt-1 text-sm text-slate-500">Create a password of at least 10 characters that you haven’t reused elsewhere.</p>
+                  <h2 id="seller-security-heading" className="text-lg font-black text-slate-900">Secure account setup</h2>
+                  <p className="mt-1 text-sm text-slate-500">Create a password of at least 12 characters. We’ll confirm your email before your application is reviewed.</p>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <label className="block text-sm font-bold text-slate-700">
-                    Password
-                    <input required minLength={10} name="password" type="password" autoComplete="new-password" placeholder="At least 10 characters" className={fieldClass}/>
-                  </label>
-                  <label className="block text-sm font-bold text-slate-700">
-                    Confirm password
-                    <input required minLength={10} name="password_confirmation" type="password" autoComplete="new-password" placeholder="Enter it again" className={fieldClass}/>
-                  </label>
+                  <div className="text-sm font-bold text-slate-700">
+                    <label htmlFor="vendor-register-password">Password</label>
+                    <PasswordInput id="vendor-register-password" required minLength={12} name="password" autoComplete="new-password" placeholder="At least 12 characters" wrapperClassName="mt-2" className={passwordFieldClass} toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
+                  </div>
+                  <div className="text-sm font-bold text-slate-700">
+                    <label htmlFor="vendor-register-password-confirm">Confirm password</label>
+                    <PasswordInput id="vendor-register-password-confirm" required minLength={12} name="password_confirmation" autoComplete="new-password" placeholder="Enter it again" wrapperClassName="mt-2" className={passwordFieldClass} toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
+                  </div>
                 </div>
               </section>
 
@@ -130,7 +135,7 @@ export default function VendorRegister() {
                 <label className="mt-4 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 px-5 py-7 text-center transition hover:border-violet-300 hover:bg-violet-50/50">
                   <span className="text-sm font-bold text-slate-700">Choose a logo image</span>
                   <span className="mt-1 text-xs text-slate-500">PNG, JPG, or WEBP</span>
-                  <input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp" className="mt-4 block max-w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-100 file:px-3 file:py-2 file:font-bold file:text-violet-800 hover:file:bg-violet-200"/>
+                  <input name="business_logo" type="file" accept="image/png,image/jpeg,image/webp" onChange={async event => { const input = event.currentTarget; input.disabled = true; try { await optimizeImageInput(input); } catch (error) { input.value = ''; const message = error instanceof Error ? error.message : 'Could not prepare the logo.'; setError(message); notify('error', message, 'Image preparation failed'); } finally { input.disabled = false; } }} className="mt-4 block max-w-full text-xs text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-violet-100 file:px-3 file:py-2 file:font-bold file:text-violet-800 hover:file:bg-violet-200"/>
                 </label>
               </section>
 
