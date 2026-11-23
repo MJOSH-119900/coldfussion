@@ -116,7 +116,7 @@ export async function registerAdminAction(data: FormData) {
 
         const admin = createSupabaseAdminClient();
         const { error: roleError } = await admin.auth.admin.updateUserById(signup.user.id, {
-            app_metadata: { role: 'admin' },
+            app_metadata: { role: 'super_admin' },
         });
         if (roleError) {
             try {

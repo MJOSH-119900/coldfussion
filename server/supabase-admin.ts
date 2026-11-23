@@ -4,7 +4,7 @@ import { getSupabaseConfig } from "./supabase";
 
 export function createSupabaseAdminClient() {
   const { url } = getSupabaseConfig();
-  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SECRET_KEY;
 
   if (!key) {
     throw new Error("SUPABASE_SECRET_KEY must be configured on the server.");

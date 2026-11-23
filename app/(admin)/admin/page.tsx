@@ -14,11 +14,11 @@ function AdminLoading() {
 async function AdminPageContent() {
     const session = await getSession();
 
-    if (!session || session.role !== 'admin') {
+    if (!session || (session.role !== 'admin' && session.role !== 'super_admin')) {
         redirect('/admin/login');
     }
 
-    return <AdminDashboardClient />;
+    return <AdminDashboardClient isSuperAdmin={session.role === 'super_admin'} />;
 }
 
 export default function AdminPage() {

@@ -9,6 +9,7 @@ import ProductFeedbackSection from './ProductFeedbackSection';
 import { useToast } from '../../components/ToastProvider';
 import { recordEngagement } from '../../../lib/marketplace';
 import { useBranding } from '../../(public)/components/BrandingProvider';
+import { normalizeProductMainCategory } from '../../../lib/product-categories';
 export default function ProductDetailsClient({ product, related, feedback }: {
     product: Product;
     related: Product[];
@@ -70,7 +71,7 @@ export default function ProductDetailsClient({ product, related, feedback }: {
         </div>
         <div className="py-2">
           <div className="flex flex-wrap gap-2">
-            <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-violet-700">{product.category}</span>
+            <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-violet-700">{normalizeProductMainCategory(product.category)}{product.subcategory ? ` · ${product.subcategory}` : ''}</span>
             {product.giveaway && <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">Giveaway</span>}
             {discounted && <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-700">Slash price</span>}
           </div>

@@ -6,6 +6,7 @@ import ProductCard from '../../(public)/components/ProductCard';
 import { useCart } from '../../(public)/components/CartProvider';
 import { Product } from '../../(public)/components/types/store';
 import { useBranding } from '../../(public)/components/BrandingProvider';
+import { normalizeProductMainCategory } from '../../../lib/product-categories';
 
 export default function ProductDetails({ product, relatedProducts = [] }: { product?: Product; relatedProducts?: Product[] }) {
   const [activeImage, setActiveImage] = useState(0);
@@ -61,7 +62,7 @@ export default function ProductDetails({ product, relatedProducts = [] }: { prod
           {gallery.length > 1 && <div className="mt-3 grid grid-cols-5 gap-2 sm:grid-cols-7">{gallery.map((src, index) => <button key={`${src}-${index}`} onClick={() => setActiveImage(index)} aria-label={`View product image ${index + 1}`} className={`overflow-hidden rounded-xl border-2 ${activeImage === index ? 'border-violet-600' : 'border-transparent'}`}><img src={src} alt="" className="h-16 w-full object-cover sm:h-20" /></button>)}</div>}
         </div>
         <div className="py-2">
-          <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-violet-700">{product.category}</span>
+          <span className="rounded-full bg-violet-50 px-3 py-1 text-xs font-bold uppercase tracking-wider text-violet-700">{normalizeProductMainCategory(product.category)}{product.subcategory ? ` · ${product.subcategory}` : ''}</span>
           <h1 className="mt-5 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">{product.title}</h1>
           <p className="mt-4 text-3xl font-black text-violet-700">₦{product.price.toLocaleString()}</p>
           <p className="mt-6 leading-7 text-slate-600">{product.description}</p>

@@ -12,6 +12,7 @@ export interface Product {
     is_available?: boolean;
     images: string[];
     category: string;
+    subcategory?: string;
     tags: string[];
     likes_count: number;
     vendor_whatsapp: string;
@@ -23,6 +24,40 @@ export interface Product {
     is_top_selling?: boolean;
     related_products_mode?: 'category' | 'random' | 'manual';
     related_product_ids?: string[];
+}
+export type VendorProductRequestStatus = 'pending' | 'approved' | 'rejected';
+export interface VendorProductRequest {
+    request_id: string;
+    vendor_id: string;
+    main_category: string;
+    subcategory: string;
+    product_name: string;
+    product_description: string;
+    product_image?: string;
+    reason: string;
+    status: VendorProductRequestStatus;
+    admin_comment?: string;
+    reviewed_by?: string;
+    created_at: string;
+    reviewed_at?: string;
+    published_product_id?: string;
+    fulfilled_at?: string;
+    vendor?: {
+        vendor_id: string;
+        business_name: string;
+        owner_name: string;
+        email: string;
+        status: string;
+    };
+}
+export interface VendorProductAccess {
+    main_category: string;
+    subcategory: string;
+    initial_permission_available: boolean;
+    published_products: number;
+    remaining_permissions: number;
+    requests: VendorProductRequest[];
+    approved_requests: VendorProductRequest[];
 }
 export type BannerIntervalUnit = 'seconds' | 'hours' | 'days';
 export interface BannerSlide {
@@ -97,9 +132,20 @@ export interface Order {
     created_at: string;
     whatsapp_handoff_at?: string;
     vendor_whatsapp?: string;
+    receipt_confirmation_token_hash?: string;
+    receipt_confirmation_expires_at?: string;
+    receipt_confirmation_sent_at?: string;
+    customer_received_at?: string;
     status_history: {
         status: OrderStatus;
         at: string;
         actor: string;
     }[];
+}
+export interface OrderReceiptConfirmation {
+    order_id: string;
+    items: { product_name: string; quantity: number }[];
+    total: number;
+    expires_at: string;
+    customer_received_at?: string;
 }

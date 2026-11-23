@@ -1,9 +1,9 @@
 'use server';
 import path from 'path';
 import { revalidatePath } from 'next/cache';
-import { getSession, requireAdmin, requireVendor } from '../../../lib/auth';
-import { nextId, readJson, updateJson, writeJson } from '../../../lib/json-store';
-import { Product } from '../../(public)/components/types/store';
+import { getSession, requireAdmin, requireSuperAdmin, requireVendor } from '../../../lib/auth';
+import { nextId, readJson, updateJson, updateProductsAtomically, writeJson } from '../../../lib/json-store';
+import { Product, VendorProductAccess, VendorProductRequest, VendorProductRequestStatus } from '../../(public)/components/types/store';
 import { deleteMusicTrack, getMusicTracks, getMusicSettings, saveMusicTrack, setMusicEnabled } from '../../../lib/music';
 import { getBannerSettings, removeBanner, saveBanner, saveBannerInterval } from '../../../lib/banners';
 import type { BannerIntervalUnit, BannerSettings } from '../../(public)/components/types/store';
@@ -15,7 +15,70 @@ import { checkPasswordAgainstBreaches } from '../../../lib/password-security';
 import { createSupabaseAdminClient } from '../../../server/supabase-admin';
 import { createSupabaseServerClient, getAuthCallbackUrl } from '../../../server/supabase';
 import { deleteStoreAsset, deleteStoreAssetIfUnused, uploadStoreAsset } from '../../../server/storage';
+import { prisma } from '../../../server/db';
+import { isValidProductCategoryPair, normalizeSelectedProductSubcategory } from '../../../lib/product-categories';
+import { isValidProductImage, productImageContentType } from '../../../lib/product-image-validation';
+import { authorizeVendorProductSubmission, matchesApprovedProductRequest } from '../../../lib/vendor-product-permissions';
 const validEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+class ProductActionError extends Error {}
+
+export async function getSubAdminsAction() {
+    await requireSuperAdmin();
+    const supabase = createSupabaseAdminClient();
+    const users: Array<{ id: string; email: string; created_at: string }> = [];
+    for (let page = 1; ; page++) {
+        const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+        if (error) throw new Error('Could not load administrator accounts.');
+        users.push(...data.users.filter(user => user.app_metadata?.role === 'admin').map(user => ({ id: user.id, email: user.email || '', created_at: user.created_at })));
+        if (data.users.length < 1000) break;
+    }
+    return users.sort((a, b) => a.created_at.localeCompare(b.created_at));
+}
+
+export async function inviteSubAdminAction(emailInput: string) {
+    await requireSuperAdmin();
+    const email = emailInput.trim().toLowerCase();
+    if (!validEmail(email)) return { success: false, error: 'Enter a valid email address.' };
+    try {
+        const supabase = createSupabaseAdminClient();
+        const { data, error } = await supabase.auth.admin.inviteUserByEmail(email, { redirectTo: getAuthCallbackUrl('/admin'), data: { invited_as: 'sub_admin' } });
+        if (error || !data.user) return { success: false, error: 'Could not invite this sub-admin. Check whether the email already has an account.' };
+        const { error: roleError } = await supabase.auth.admin.updateUserById(data.user.id, { app_metadata: { role: 'admin' } });
+        if (roleError) {
+            await supabase.auth.admin.deleteUser(data.user.id);
+            return { success: false, error: 'The invite could not be assigned administrator access.' };
+        }
+        revalidatePath('/admin');
+        return { success: true };
+    } catch {
+        return { success: false, error: 'Could not invite this sub-admin right now.' };
+    }
+}
+
+export async function revokeSubAdminAction(userId: string) {
+    await requireSuperAdmin();
+    if (!userId) return { success: false, error: 'Invalid administrator account.' };
+    const supabase = createSupabaseAdminClient();
+    const { data, error: lookupError } = await supabase.auth.admin.getUserById(userId);
+    if (lookupError || data.user?.app_metadata?.role !== 'admin') return { success: false, error: 'Sub-admin account was not found.' };
+    const { error } = await supabase.auth.admin.updateUserById(userId, { app_metadata: { role: 'revoked' } });
+    if (error) return { success: false, error: 'Could not revoke this sub-admin.' };
+    revalidatePath('/admin');
+    return { success: true };
+}
+
+export async function deleteSubAdminAction(userId: string) {
+    await requireSuperAdmin();
+    if (!userId) return { success: false, error: 'Invalid administrator account.' };
+    const supabase = createSupabaseAdminClient();
+    const { data, error: lookupError } = await supabase.auth.admin.getUserById(userId);
+    if (lookupError || data.user?.app_metadata?.role !== 'admin') return { success: false, error: 'Sub-admin account was not found.' };
+    const { error } = await supabase.auth.admin.deleteUser(userId);
+    if (error) return { success: false, error: 'Could not delete this sub-admin.' };
+    revalidatePath('/admin');
+    return { success: true };
+}
 export async function getUpgradeAnnouncementAction() {
     await requireAdmin();
     return getUpgradeAnnouncement();
@@ -34,7 +97,7 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
     const session = await getSession();
     if (!session)
         return { success: false, error: 'Unauthorized' };
-    if (session.role !== 'admin' && session.role !== 'vendor')
+    if (session.role !== 'admin' && session.role !== 'super_admin' && session.role !== 'vendor')
         return { success: false, error: 'Unauthorized' };
     if (session.role === 'vendor' && session.vendorId !== vendorId)
         return { success: false, error: 'You cannot use another vendor account.' };
@@ -44,9 +107,68 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
         return { success: false, error: 'Product not found' };
     if (session.role === 'vendor' && existing && existing.vendor_id !== session.vendorId)
         return { success: false, error: 'You cannot edit another vendor’s product.' };
-    const owner = existing?.vendor_id || (session.role === 'admin' ? vendorId : session.vendorId);
+    const owner = existing?.vendor_id || (session.role !== 'vendor' ? vendorId : session.vendorId);
     if (!owner) return { success: false, error: 'Vendor account is not linked to a valid vendor profile.' };
-    const productRecordId = existing?.id || productId || `prod-${Date.now()}`;
+    const productRecordId = existing?.id || productId || `prod-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const title = String(formData.get('title') || '').trim();
+    const description = String(formData.get('description') || '').trim();
+    const category = String(formData.get('category') || '').trim();
+    const selectedSubcategory = String(formData.get('subcategory') || '').trim();
+    const customSubcategory = String(formData.get('subcategory_custom') || '');
+    const subcategory = normalizeSelectedProductSubcategory(
+        selectedSubcategory,
+        customSubcategory,
+    ) || (session.role === 'vendor' && selectedSubcategory === 'Other' && !customSubcategory.trim() ? 'Other' : '');
+    if (!title || title.length > 150) return { success: false, error: 'Product name is required and must be 150 characters or fewer.' };
+    if (!description || description.length > 5000) return { success: false, error: 'Product description is required and must be 5,000 characters or fewer.' };
+    if (!subcategory || !isValidProductCategoryPair(category, subcategory)) {
+        const unchangedLegacyCategory = Boolean(existing) &&
+            category === existing?.category &&
+            subcategory === (existing?.subcategory || '');
+        if (!unchangedLegacyCategory) return { success: false, error: 'Select a valid main category and subcategory.' };
+    }
+
+    let preflightPermission: ReturnType<typeof authorizeVendorProductSubmission> | undefined;
+    if (session.role === 'vendor') {
+        const policy = await prisma.vendorProductPolicy.findUnique({ where: { vendorId: owner } });
+        if (!policy) return { success: false, error: 'Your vendor account has no product upload policy. Contact an administrator.' };
+        if (existing) {
+            if (category !== existing.category || subcategory !== (existing.subcategory || '')) {
+                return { success: false, error: 'Product categories cannot be changed after publication. Request approval for another product instead.' };
+            }
+            const approvedRequest = await prisma.vendorProductRequest.findFirst({
+                where: { vendorId: owner, publishedProductId: existing.id, status: 'approved' },
+            });
+            if (approvedRequest && !matchesApprovedProductRequest(approvedRequest, { category, subcategory, title, description })) {
+                return { success: false, error: 'Product name, description, category, and subcategory are fixed by its approved request.' };
+            }
+        } else {
+            const requests = await prisma.vendorProductRequest.findMany({
+                where: { vendorId: owner, status: 'approved', fulfilledAt: null, publishedProductId: null },
+            });
+            preflightPermission = authorizeVendorProductSubmission(
+                {
+                    mainCategory: policy.mainCategory,
+                    subcategory: policy.subcategory,
+                    initialPermissionAvailable: policy.initialProductPublishedAt === null &&
+                        !products.some(item => item.vendor_id === owner),
+                },
+                requests.map(request => ({
+                    requestId: request.requestId,
+                    mainCategory: request.mainCategory,
+                    subcategory: request.subcategory,
+                    productName: request.productName,
+                    productDescription: request.productDescription,
+                    status: request.status,
+                    fulfilledAt: request.fulfilledAt,
+                })),
+                { category, subcategory, title, description },
+                String(formData.get('product_permission_request_id') || '').trim() || undefined,
+            );
+            if (!preflightPermission.allowed) return { success: false, error: preflightPermission.error };
+        }
+    }
+
     const uploadedFiles = formData.getAll('image_files').filter((v): v is File => v instanceof File && v.size > 0);
     if (uploadedFiles.length > 4) return { success: false, error: 'Upload a maximum of 4 product photos at a time.' };
     const uploadedImages: string[] = [];
@@ -57,14 +179,9 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
             const allowed = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif']);
             if (!allowed.has(ext)) return { success: false, error: `Unsupported picture “${file.name}”. Use JPG, JPEG, PNG, WEBP, GIF or AVIF.` };
             const bytes = Buffer.from(await file.arrayBuffer());
-            const isJpeg = (ext === '.jpg' || ext === '.jpeg') && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-            const isPng = ext === '.png' && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-            const isWebp = ext === '.webp' && bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP';
-            const isGif = ext === '.gif' && ['GIF87a', 'GIF89a'].includes(bytes.subarray(0, 6).toString());
-            const isAvif = ext === '.avif' && bytes.subarray(4, 12).toString().includes('ftypavif');
-            if (!(isJpeg || isPng || isWebp || isGif || isAvif)) return { success: false, error: `“${file.name}” is not a valid ${ext.slice(1).toUpperCase()} picture. Upload an original JPG, PNG, WEBP, GIF or AVIF image.` };
+            if (!isValidProductImage(ext, bytes)) return { success: false, error: `“${file.name}” is not a valid ${ext.slice(1).toUpperCase()} picture. Upload an original JPG, PNG, WEBP, GIF or AVIF image.` };
             const name = `${vendorId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`;
-            uploadedImages.push(await uploadStoreAsset(`${owner}/products/${productRecordId}/${name.replace(/\.[^.]+$/, '.webp')}`, bytes, 'image/webp'));
+            uploadedImages.push(await uploadStoreAsset(`${owner}/products/${productRecordId}/${name}`, bytes, productImageContentType(ext)));
         }
     }
     const price = Number(formData.get('price') || 0);
@@ -105,13 +222,102 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
         : price;
     if (compareRaw && (compare === undefined || !Number.isFinite(compare) || compare <= highestPriceUsingMainCompare))
         return { success: false, error: 'The main previous price must be higher than every current size price without an individual previous price.' };
-    const isAdmin = session.role === 'admin';
-    const product: Product = { id: existing?.id || `prod-${Date.now()}`, vendor_id: owner, title: String(formData.get('title') || '').trim(), description: String(formData.get('description') || '').trim(), price, compare_at_price: compare, size_prices: size_prices.length ? size_prices : undefined, available_quantity: Math.max(0, Number(formData.get('available_quantity') || 0)), is_available: formData.get('is_available') === 'true' && Number(formData.get('available_quantity') || 0) > 0, giveaway: formData.get('giveaway') === 'true', giveaway_announcement: String(formData.get('giveaway_announcement') || '').trim() || undefined, images: (uploadedImages.length ? uploadedImages : existing?.images || []).slice(0, 4), category: String(formData.get('category') || 'Other').trim(), tags: String(formData.get('tags') || '').split(',').map(s => s.trim()).filter(Boolean), likes_count: existing?.likes_count || 0, vendor_whatsapp: String(formData.get('vendor_whatsapp') || '').trim(), location: String(formData.get('location') || '').trim(), condition: (String(formData.get('condition') || 'new') as Product['condition']), detail_gallery_enabled: formData.get('detail_gallery_enabled') === 'true', is_latest: formData.get('is_latest') === 'true', is_top_selling: isAdmin ? formData.get('is_top_selling') === 'true' : existing?.is_top_selling || false, related_products_mode: (String(formData.get('related_products_mode') || 'category') as Product['related_products_mode']), related_product_ids: formData.getAll('related_product_ids').map(String).filter(Boolean).slice(0, 4) };
-    product.id = productRecordId;
+    const isAdmin = session.role !== 'vendor';
+    const product: Product = { id: productRecordId, vendor_id: owner, title, description, price, compare_at_price: compare, size_prices: size_prices.length ? size_prices : undefined, available_quantity: Math.max(0, Number(formData.get('available_quantity') || 0)), is_available: formData.get('is_available') === 'true' && Number(formData.get('available_quantity') || 0) > 0, giveaway: formData.get('giveaway') === 'true', giveaway_announcement: String(formData.get('giveaway_announcement') || '').trim() || undefined, images: (uploadedImages.length ? uploadedImages : existing?.images || []).slice(0, 4), category, subcategory, tags: String(formData.get('tags') || '').split(',').map(s => s.trim()).filter(Boolean), likes_count: existing?.likes_count || 0, vendor_whatsapp: String(formData.get('vendor_whatsapp') || '').trim(), location: String(formData.get('location') || '').trim(), condition: (String(formData.get('condition') || 'new') as Product['condition']), detail_gallery_enabled: formData.get('detail_gallery_enabled') === 'true', is_latest: formData.get('is_latest') === 'true', is_top_selling: isAdmin ? formData.get('is_top_selling') === 'true' : existing?.is_top_selling || false, related_products_mode: (String(formData.get('related_products_mode') || 'category') as Product['related_products_mode']), related_product_ids: formData.getAll('related_product_ids').map(String).filter(Boolean).slice(0, 4) };
     try {
-        await writeJson('products.json', productId ? products.map(p => p.id === productId ? product : p) : [...products, product]);
+        const savedProduct = await updateProductsAtomically<Product, Product>(async (current, tx) => {
+            const currentExisting = productId ? current.find(item => item.id === productId) : undefined;
+            if (productId && !currentExisting) throw new ProductActionError('Product not found.');
+            let approvedRequestImage: string | undefined;
+            if (session.role === 'vendor') {
+                if (currentExisting && currentExisting.vendor_id !== session.vendorId) {
+                    throw new ProductActionError('You cannot edit another vendor’s product.');
+                }
+                if (currentExisting) {
+                    if (category !== currentExisting.category || subcategory !== (currentExisting.subcategory || '')) {
+                        throw new ProductActionError('Product categories cannot be changed after publication. Request approval for another product instead.');
+                    }
+                    const approvedRequest = await tx.vendorProductRequest.findFirst({
+                        where: { vendorId: owner, publishedProductId: currentExisting.id, status: 'approved' },
+                    });
+                    if (approvedRequest && !matchesApprovedProductRequest(approvedRequest, { category, subcategory, title, description })) {
+                        throw new ProductActionError('Product name, description, category, and subcategory are fixed by its approved request.');
+                    }
+                    if (approvedRequest?.productImage && uploadedImages.length) {
+                        throw new ProductActionError('The product image is fixed by its approved request.');
+                    }
+                } else {
+                    const policy = await tx.vendorProductPolicy.findUnique({ where: { vendorId: owner } });
+                    const requests = await tx.vendorProductRequest.findMany({
+                        where: { vendorId: owner, status: 'approved', fulfilledAt: null, publishedProductId: null },
+                    });
+                    const permission = authorizeVendorProductSubmission(
+                        policy ? {
+                            mainCategory: policy.mainCategory,
+                            subcategory: policy.subcategory,
+                            initialPermissionAvailable: policy.initialProductPublishedAt === null &&
+                                !current.some(item => item.vendor_id === owner),
+                        } : null,
+                        requests.map(request => ({
+                            requestId: request.requestId,
+                            mainCategory: request.mainCategory,
+                            subcategory: request.subcategory,
+                            productName: request.productName,
+                            productDescription: request.productDescription,
+                            status: request.status,
+                            fulfilledAt: request.fulfilledAt,
+                        })),
+                        { category, subcategory, title, description },
+                        String(formData.get('product_permission_request_id') || '').trim() || undefined,
+                    );
+                    if (!permission.allowed) throw new ProductActionError(permission.error);
+
+                    const now = new Date().toISOString();
+                    const grant = permission.grant;
+                    if (grant.type === 'initial') {
+                        const claimed = await tx.vendorProductPolicy.updateMany({
+                            where: { vendorId: owner, initialProductPublishedAt: null, initialProductId: null },
+                            data: { initialProductId: product.id, initialProductPublishedAt: now },
+                        });
+                        if (claimed.count !== 1) throw new ProductActionError('The first product permission was already used. Refresh and check your product requests.');
+                    } else {
+                        const approvedRequest = requests.find(request => request.requestId === grant.requestId);
+                        if (approvedRequest?.productImage) {
+                            if (uploadedImages.length) {
+                                throw new ProductActionError('Use the product image submitted with this approved request.');
+                            }
+                            approvedRequestImage = approvedRequest.productImage;
+                        }
+                        const claimed = await tx.vendorProductRequest.updateMany({
+                            where: {
+                                requestId: grant.requestId,
+                                vendorId: owner,
+                                status: 'approved',
+                                fulfilledAt: null,
+                                publishedProductId: null,
+                            },
+                            data: { publishedProductId: product.id, fulfilledAt: now },
+                        });
+                        if (claimed.count !== 1) throw new ProductActionError('This product approval was already used. Refresh the dashboard and try again.');
+                    }
+                }
+            }
+            const saved = {
+                ...product,
+                ...(approvedRequestImage ? { images: [approvedRequestImage] } : {}),
+                likes_count: currentExisting?.likes_count || 0,
+            };
+            return {
+                next: productId
+                    ? current.map(item => item.id === productId ? saved : item)
+                    : [...current, saved],
+                result: saved,
+            };
+        });
+        Object.assign(product, savedProduct);
     } catch (error) {
         await Promise.all(uploadedImages.map(deleteStoreAsset));
+        if (error instanceof ProductActionError) return { success: false, error: error.message };
         throw error;
     }
     await Promise.all((existing?.images || []).filter(image => !product.images.includes(image)).map(deleteStoreAssetIfUnused));
@@ -123,21 +329,234 @@ export async function saveProductAction(formData: FormData, vendorId: string, pr
 }
 export async function deleteProductAction(id: string) {
     const session = await getSession();
-    if (!session || (session.role !== 'admin' && session.role !== 'vendor'))
+    if (!session || (session.role !== 'admin' && session.role !== 'super_admin' && session.role !== 'vendor'))
         return { success: false, error: 'Unauthorized' };
-    const products = await readJson<Product[]>('products.json', []);
-    const target = products.find(product => product.id === id);
-    if (!target) return { success: false, error: 'Product not found' };
-    if (session.role === 'vendor' && target.vendor_id !== session.vendorId)
-        return { success: false, error: 'You cannot delete another vendor product.' };
-
-    await writeJson('products.json', products.filter(product => product.id !== id));
+    let target: Product | undefined;
+    try {
+        await updateProductsAtomically<Product, void>(async current => {
+            target = current.find(product => product.id === id);
+            if (!target) throw new ProductActionError('Product not found.');
+            if (session.role === 'vendor' && target.vendor_id !== session.vendorId) {
+                throw new ProductActionError('You cannot delete another vendor product.');
+            }
+            return { next: current.filter(product => product.id !== id), result: undefined };
+        });
+    } catch (error) {
+        if (error instanceof ProductActionError) return { success: false, error: error.message };
+        throw error;
+    }
+    if (!target) return { success: false, error: 'Product not found.' };
     await Promise.all((target.images || []).filter(image => image.startsWith('/uploads/')).map(deleteStoreAssetIfUnused));
     revalidatePath('/');
     revalidatePath('/admin');
     revalidatePath('/vendor/dashboard');
     return { success: true };
 }
+
+function toVendorProductRequest(row: {
+    requestId: string;
+    vendorId: string;
+    mainCategory: string;
+    subcategory: string;
+    productName: string;
+    productDescription: string;
+    productImage: string | null;
+    reason: string;
+    status: string;
+    adminComment: string | null;
+    reviewedBy: string | null;
+    createdAt: string;
+    reviewedAt: string | null;
+    publishedProductId: string | null;
+    fulfilledAt: string | null;
+}): VendorProductRequest {
+    return {
+        request_id: row.requestId,
+        vendor_id: row.vendorId,
+        main_category: row.mainCategory,
+        subcategory: row.subcategory,
+        product_name: row.productName,
+        product_description: row.productDescription,
+        product_image: row.productImage || undefined,
+        reason: row.reason,
+        status: row.status as VendorProductRequestStatus,
+        admin_comment: row.adminComment || undefined,
+        reviewed_by: row.reviewedBy || undefined,
+        created_at: row.createdAt,
+        reviewed_at: row.reviewedAt || undefined,
+        published_product_id: row.publishedProductId || undefined,
+        fulfilled_at: row.fulfilledAt || undefined,
+    };
+}
+
+export async function getVendorProductAccessAction(): Promise<VendorProductAccess | null> {
+    const session = await requireVendor();
+    const [policy, publishedProducts, requests, approvedRequests] = await Promise.all([
+        prisma.vendorProductPolicy.findUnique({ where: { vendorId: session.vendorId } }),
+        prisma.product.count({ where: { vendorId: session.vendorId } }),
+        prisma.vendorProductRequest.findMany({
+            where: { vendorId: session.vendorId },
+            orderBy: { createdAt: 'desc' },
+        }),
+        prisma.vendorProductRequest.findMany({
+            where: {
+                vendorId: session.vendorId,
+                status: 'approved',
+                fulfilledAt: null,
+                publishedProductId: null,
+            },
+            orderBy: { createdAt: 'asc' },
+        }),
+    ]);
+    if (!policy) return null;
+    const initialPermissionAvailable = policy.initialProductPublishedAt === null && publishedProducts === 0;
+    return {
+        main_category: policy.mainCategory,
+        subcategory: policy.subcategory,
+        initial_permission_available: initialPermissionAvailable,
+        published_products: publishedProducts,
+        remaining_permissions: Number(initialPermissionAvailable) + approvedRequests.length,
+        requests: requests.map(toVendorProductRequest),
+        approved_requests: approvedRequests.map(toVendorProductRequest),
+    };
+}
+
+export async function createVendorProductRequestAction(formData: FormData) {
+    const session = await requireVendor();
+    const mainCategory = String(formData.get('main_category') || '').trim();
+    const subcategory = normalizeSelectedProductSubcategory(
+        String(formData.get('subcategory') || ''),
+        String(formData.get('subcategory_custom') || ''),
+    );
+    const productName = String(formData.get('product_name') || '').trim();
+    const productDescription = String(formData.get('product_description') || '').trim();
+    const reason = String(formData.get('reason') || '').trim();
+    if (!subcategory || !isValidProductCategoryPair(mainCategory, subcategory)) {
+        return { success: false, error: 'Select a valid product category and subcategory.' };
+    }
+    if (!productName || productName.length > 150) {
+        return { success: false, error: 'Product name is required and must be 150 characters or fewer.' };
+    }
+    if (!productDescription || productDescription.length > 5000) {
+        return { success: false, error: 'Product description is required and must be 5,000 characters or fewer.' };
+    }
+    if (!reason || reason.length > 2000) {
+        return { success: false, error: 'A reason is required and must be 2,000 characters or fewer.' };
+    }
+
+    const policy = await prisma.vendorProductPolicy.findUnique({ where: { vendorId: session.vendorId } });
+    if (!policy) return { success: false, error: 'Your vendor account has no product upload policy. Contact an administrator.' };
+    if (policy.initialProductPublishedAt === null) {
+        return { success: false, error: 'Publish your first authorized product before requesting another product.' };
+    }
+
+    const requestId = await nextId('VPRQ', 4, 'vendorProductRequest');
+    const imageFile = formData.get('product_image');
+    let productImage: string | undefined;
+    if (imageFile instanceof File && imageFile.size > 0) {
+        if (imageFile.size > 500 * 1024) {
+            return { success: false, error: 'The request image must be 500 KB or smaller.' };
+        }
+        const extension = path.extname(imageFile.name).toLowerCase();
+        if (!new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.avif']).has(extension)) {
+            return { success: false, error: 'Use a JPG, JPEG, PNG, WEBP, GIF or AVIF product image.' };
+        }
+        const bytes = Buffer.from(await imageFile.arrayBuffer());
+        if (!isValidProductImage(extension, bytes)) {
+            return { success: false, error: 'The selected product image is not a valid image file.' };
+        }
+        productImage = await uploadStoreAsset(
+            `${session.vendorId}/product-requests/${requestId}/proposal${extension}`,
+            bytes,
+            productImageContentType(extension),
+        );
+    }
+
+    try {
+        await prisma.$transaction(async tx => {
+            const currentPolicy = await tx.vendorProductPolicy.findUnique({ where: { vendorId: session.vendorId } });
+            if (!currentPolicy || currentPolicy.initialProductPublishedAt === null) {
+                throw new ProductActionError('Publish your first authorized product before requesting another product.');
+            }
+            await tx.vendorProductRequest.create({
+                data: {
+                    requestId,
+                    vendorId: session.vendorId,
+                    mainCategory,
+                    subcategory,
+                    productName,
+                    productDescription,
+                    productImage,
+                    reason,
+                    status: 'pending',
+                    createdAt: new Date().toISOString(),
+                },
+            });
+        }, { isolationLevel: 'Serializable' });
+    } catch (error) {
+        if (productImage) await deleteStoreAsset(productImage);
+        if (error instanceof ProductActionError) return { success: false, error: error.message };
+        throw error;
+    }
+
+    revalidatePath('/vendor/dashboard');
+    revalidatePath('/admin');
+    return { success: true, requestId };
+}
+
+export async function getVendorProductRequestsAction(): Promise<VendorProductRequest[]> {
+    await requireAdmin();
+    const requests = await prisma.vendorProductRequest.findMany({
+        include: { vendor: true },
+        orderBy: { createdAt: 'desc' },
+    });
+    return requests.map(request => ({
+        ...toVendorProductRequest(request),
+        vendor: {
+            vendor_id: request.vendor.vendorId,
+            business_name: request.vendor.businessName,
+            owner_name: request.vendor.ownerName,
+            email: request.vendor.email,
+            status: request.vendor.status,
+        },
+    }));
+}
+
+export async function reviewVendorProductRequestAction(
+    requestId: string,
+    decision: 'approved' | 'rejected',
+    comment = '',
+) {
+    const admin = await requireAdmin();
+    const id = String(requestId || '').trim();
+    const adminComment = String(comment || '').trim();
+    if (!id) return { success: false, error: 'Select a vendor product request.' };
+    if (decision !== 'approved' && decision !== 'rejected') {
+        return { success: false, error: 'Choose approval or rejection.' };
+    }
+    if (decision === 'rejected' && !adminComment) {
+        return { success: false, error: 'Add a comment explaining why this request was rejected.' };
+    }
+    if (adminComment.length > 2000) {
+        return { success: false, error: 'The admin comment must be 2,000 characters or fewer.' };
+    }
+    const result = await prisma.vendorProductRequest.updateMany({
+        where: { requestId: id, status: 'pending' },
+        data: {
+            status: decision,
+            adminComment: decision === 'rejected' ? adminComment : null,
+            reviewedBy: admin.email,
+            reviewedAt: new Date().toISOString(),
+        },
+    });
+    if (result.count !== 1) {
+        return { success: false, error: 'This request was already reviewed or no longer exists.' };
+    }
+    revalidatePath('/admin');
+    revalidatePath('/vendor/dashboard');
+    return { success: true };
+}
+
 export async function createVendorFromRequestAction(requestId: string) {
     await requireAdmin();
     const normalizedId = requestId.trim().toUpperCase().replace('-', '');
@@ -149,6 +568,11 @@ export async function createVendorFromRequestAction(requestId: string) {
         return { success: false, error: 'Application ID not found.' };
     if (request.status !== 'pending')
         return { success: false, error: `This application is already ${request.status}.` };
+    const mainCategory = String(request.product_main_category || '').trim();
+    const subcategory = String(request.product_subcategory || '').trim();
+    if (!isValidProductCategoryPair(mainCategory, subcategory)) {
+        return { success: false, error: 'The application has an invalid product category selection. Ask the vendor to update their application.' };
+    }
     const email = String(request.email).trim().toLowerCase();
     const vendors = await readJson<any[]>('vendors.json', []);
     const existingVendor = vendors.find(v => String(v.email || '').trim().toLowerCase() === email);
@@ -175,11 +599,55 @@ export async function createVendorFromRequestAction(requestId: string) {
         return { success: false, error: 'Could not activate the vendor account. Try again later.' };
     }
 
-    const vendor = { ...existingVendor, vendor_id: vendorId, business_name: request.business_name, owner_name: request.owner_name, email, whatsapp_number: request.whatsapp_number, business_address: request.business_address, business_category: request.business_category, business_description: request.business_description, logo: request.logo || existingVendor?.logo || '', status: 'approved', created_at: existingVendor?.created_at || new Date().toISOString() };
-    await writeJson('vendors.json', existingVendor
-        ? vendors.map(v => v.vendor_id === vendorId ? vendor : v)
-        : [...vendors, vendor]);
-    await writeJson('vendor_requests.json', requests.map(r => r.request_id === request.request_id ? { ...r, status: 'approved', vendor_id: vendorId, approved_at: new Date().toISOString(), password_hash: undefined } : r));
+    const now = new Date().toISOString();
+    const vendor = { ...existingVendor, vendor_id: vendorId, business_name: request.business_name, owner_name: request.owner_name, email, whatsapp_number: request.whatsapp_number, business_address: request.business_address, business_category: request.business_category, business_description: request.business_description, logo: request.logo || existingVendor?.logo || '', status: 'approved', created_at: existingVendor?.created_at || now, updated_at: now };
+    try {
+        await prisma.$transaction(async tx => {
+            const claimedRequest = await tx.vendorRequest.updateMany({
+                where: { requestId: request.request_id, status: 'pending' },
+                data: { status: 'approved', vendorId, approvedAt: now },
+            });
+            if (claimedRequest.count !== 1) {
+                throw new ProductActionError('This application was already reviewed or no longer exists.');
+            }
+            const databaseVendor = await tx.vendor.findUnique({ where: { vendorId } });
+            const vendorData = {
+                vendorId,
+                sortOrder: databaseVendor?.sortOrder ?? vendors.length,
+                businessName: vendor.business_name,
+                ownerName: vendor.owner_name,
+                email: vendor.email,
+                whatsappNumber: vendor.whatsapp_number,
+                businessAddress: vendor.business_address,
+                businessCategory: vendor.business_category,
+                businessDescription: vendor.business_description,
+                logo: vendor.logo,
+                status: vendor.status,
+                createdAt: vendor.created_at,
+                updatedAt: now,
+            };
+            await tx.vendor.upsert({
+                where: { vendorId },
+                create: vendorData,
+                update: vendorData,
+            });
+            if (!databaseVendor) {
+                await tx.vendorProductPolicy.create({
+                    data: {
+                        vendorId,
+                        mainCategory,
+                        subcategory,
+                        initialProductId: null,
+                        initialProductPublishedAt: null,
+                        createdAt: now,
+                    },
+                });
+            }
+        }, { isolationLevel: 'Serializable' });
+    } catch (error) {
+        if (error instanceof ProductActionError) return { success: false, error: error.message };
+        throw error;
+    }
     revalidatePath('/admin');
     revalidatePath('/vendor/login');
     return { success: true, vendor };
@@ -190,25 +658,41 @@ export async function rejectVendorRequestAction(requestId: string) {
     const normalizedId = requestId.trim().toUpperCase().replace('-', '');
     if (!/^VREQ\d{4,}$/.test(normalizedId))
         return { success: false, error: 'Enter the exact application ID, for example VREQ0001.' };
-    const requests = await readJson<any[]>('vendor_requests.json', []);
-    const request = requests.find(r => String(r.request_id).toUpperCase().replace('-', '') === normalizedId);
+    const request = (await readJson<any[]>('vendor_requests.json', [])).find(r => String(r.request_id).toUpperCase().replace('-', '') === normalizedId);
     if (!request)
         return { success: false, error: 'Application ID not found.' };
-    if (request.status !== 'pending')
-        return { success: false, error: `This application is already ${request.status}.` };
     const rejectionId = await nextId('REJ', 4, 'vendorRequestRejection');
-    await writeJson('vendor_requests.json', requests.map(r => r.request_id === request.request_id ? { ...r, status: 'rejected', rejected_at: new Date().toISOString(), rejection_id: rejectionId, password_hash: undefined } : r));
+    const rejected = await prisma.vendorRequest.updateMany({
+        where: { requestId: request.request_id, status: 'pending' },
+        data: { status: 'rejected', rejectedAt: new Date().toISOString(), rejectionId },
+    });
+    if (rejected.count !== 1)
+        return { success: false, error: `This application is already reviewed.` };
     revalidatePath('/admin');
     return { success: true };
 }
-export async function updateVendorStatusAction(vendorId: string, status: 'approved' | 'suspended' | 'active') { await requireAdmin(); const vendors = await readJson<any[]>('vendors.json', []); if (!vendors.some(v => v.vendor_id === vendorId))
-    return { success: false, error: 'Vendor not found' }; await writeJson('vendors.json', vendors.map(v => v.vendor_id === vendorId ? { ...v, status } : v)); return { success: true }; }
+export async function updateVendorStatusAction(vendorId: string, status: 'approved' | 'suspended' | 'active') {
+    await requireAdmin();
+    let found = false;
+    await updateJson<any[]>('vendors.json', vendors => {
+        found = vendors.some(vendor => vendor.vendor_id === vendorId);
+        return vendors.map(vendor => vendor.vendor_id === vendorId ? { ...vendor, status } : vendor);
+    }, []);
+    return found ? { success: true } : { success: false, error: 'Vendor not found' };
+}
 export async function registerVendorAction(data: FormData) {
     const email = String(data.get('email') || '').trim().toLowerCase();
     const password = String(data.get('password') || '');
     const confirmation = String(data.get('password_confirmation') || '');
+    const productMainCategory = String(data.get('product_main_category') || '').trim();
+    const productSubcategory = normalizeSelectedProductSubcategory(
+        String(data.get('product_subcategory') || ''),
+        String(data.get('product_subcategory_custom') || ''),
+    );
     if (!validEmail(email))
         return { success: false, error: 'Enter a valid email address.' };
+    if (!productSubcategory || !isValidProductCategoryPair(productMainCategory, productSubcategory))
+        return { success: false, error: 'Select a valid product main category and subcategory.' };
     if (password.length < 12)
         return { success: false, error: 'Use a password of at least 12 characters.' };
     if (password !== confirmation)
@@ -241,17 +725,27 @@ export async function registerVendorAction(data: FormData) {
         const fileName = `logo-${Date.now()}${safe}`;
         logo = await uploadStoreAsset(`vendor-requests/${requestId}/${fileName}`, Buffer.from(await logoFile.arrayBuffer()), logoFile.type || 'application/octet-stream');
     }
-    const request = { request_id: requestId, status: 'pending', business_name: String(data.get('business_name') || '').trim(), owner_name: String(data.get('owner_name') || '').trim(), email, supabase_uid: signup.user.id, whatsapp_number: String(data.get('whatsapp_number') || '').trim(), business_address: String(data.get('business_address') || '').trim(), business_category: String(data.get('business_category') || '').trim(), business_description: String(data.get('business_description') || '').trim(), logo, created_at: new Date().toISOString() };
+    const request = { request_id: requestId, status: 'pending', business_name: String(data.get('business_name') || '').trim(), owner_name: String(data.get('owner_name') || '').trim(), email, supabase_uid: signup.user.id, whatsapp_number: String(data.get('whatsapp_number') || '').trim(), business_address: String(data.get('business_address') || '').trim(), business_category: productMainCategory, business_description: String(data.get('business_description') || '').trim(), product_main_category: productMainCategory, product_subcategory: productSubcategory, logo, created_at: new Date().toISOString() };
+    let duplicatePendingApplication = false;
     try {
-        await writeJson('vendor_requests.json', [...requests, request]);
+        await updateJson<any[]>('vendor_requests.json', current => {
+            duplicatePendingApplication = current.some(item =>
+                String(item.email || '').trim().toLowerCase() === email && item.status === 'pending');
+            return duplicatePendingApplication ? current : [...current, request];
+        }, []);
     } catch (error) {
         if (logo) await deleteStoreAsset(logo);
         throw error;
     }
+    if (duplicatePendingApplication) {
+        if (logo) await deleteStoreAsset(logo);
+        if (signup.session) await supabase.auth.signOut();
+        return { success: false, error: 'This email is already registered or pending approval.' };
+    }
     if (signup.session) await supabase.auth.signOut();
     const siteSettings = await readJson<{ admin_whatsapp?: string }>('site_settings.json', { admin_whatsapp: '' });
     const adminWhatsApp = String(siteSettings.admin_whatsapp || '').replace(/\D/g, '');
-    const message = ['Fussion vendor application', `Application: ${requestId}`, `Business: ${request.business_name}`, `Owner: ${request.owner_name}`, `Email: ${request.email}`, `WhatsApp: ${request.whatsapp_number}`, `Category: ${request.business_category}`, `Address: ${request.business_address}`, `Description: ${request.business_description}`, '', 'Please review this application in the Fussion Admin Dashboard and approve or reject it.'].join('\n');
+    const message = ['Fussion vendor application', `Application: ${requestId}`, `Business: ${request.business_name}`, `Owner: ${request.owner_name}`, `Email: ${request.email}`, `WhatsApp: ${request.whatsapp_number}`, `First product category: ${productMainCategory} / ${productSubcategory}`, `Address: ${request.business_address}`, `Description: ${request.business_description}`, '', 'Please review this application in the Fussion Admin Dashboard and approve or reject it.'].join('\n');
     const whatsappUrl = adminWhatsApp.length >= 10 && adminWhatsApp.length <= 15 ? `https://wa.me/${adminWhatsApp}?text=${encodeURIComponent(message)}` : undefined;
     return { success: true, requestId, whatsappUrl, whatsappConfigured: Boolean(whatsappUrl), needsEmailConfirmation };
 }

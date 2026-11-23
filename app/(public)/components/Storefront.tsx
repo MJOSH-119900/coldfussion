@@ -6,6 +6,7 @@ import GiveawayPopup from './GiveawayPopup';
 import AboutPortraitPlaceholder from './AboutPortraitPlaceholder';
 import { useBranding } from './BrandingProvider';
 import { BannerSettings, OwnerAbout, Product } from './types/store';
+import { matchesStorefrontCategory, matchesStorefrontSubcategory, normalizeProductMainCategory, PRODUCT_MAIN_CATEGORIES } from '../../../lib/product-categories';
 function ProductRail({ title, subtitle, products }: {
     title: string;
     subtitle: string;
@@ -31,6 +32,8 @@ export default function Storefront({ products, topSellingProducts = [], trending
 }) {
     const [query, setQuery] = useState('');
     const [category, setCategory] = useState('All');
+    const [subcategory, setSubcategory] = useState('All');
+    const [openCategory, setOpenCategory] = useState<string | null>(null);
     const [sort, setSort] = useState('featured');
     const [condition, setCondition] = useState('all');
     const [availableOnly, setAvailableOnly] = useState(false);
@@ -50,17 +53,50 @@ export default function Storefront({ products, topSellingProducts = [], trending
         timeout = setTimeout(rotate, rotationMs);
         return () => clearTimeout(timeout);
     }, [banners.length, rotationMs]);
-    const categoryOptions = useMemo(() => ['All', ...Array.from(new Set(products.map(p => p.category).filter(Boolean)))], [products]);
+    const categoryCounts = useMemo(() => {
+        const counts = new Map<string, number>();
+        for (const product of products) {
+            if (product.category) {
+                const mainCategory = normalizeProductMainCategory(product.category);
+                counts.set(mainCategory, (counts.get(mainCategory) || 0) + 1);
+            }
+        }
+        return counts;
+    }, [products]);
+    const categoryOptions = useMemo(() => {
+        const additionalCategories = Array.from(new Set(products
+            .map(product => normalizeProductMainCategory(product.category))
+            .filter(category => category && !PRODUCT_MAIN_CATEGORIES.includes(category as typeof PRODUCT_MAIN_CATEGORIES[number]))))
+            .sort((a, b) => a.localeCompare(b));
+        return ['All', ...PRODUCT_MAIN_CATEGORIES, ...additionalCategories];
+    }, [products]);
+    const subcategoriesByCategory = useMemo(() => {
+        const counts = new Map<string, Map<string, number>>();
+        for (const product of products) {
+            const parent = normalizeProductMainCategory(product.category);
+            const child = product.subcategory?.trim();
+            if (!parent || !child) continue;
+            const subcategories = counts.get(parent) || new Map<string, number>();
+            subcategories.set(child, (subcategories.get(child) || 0) + 1);
+            counts.set(parent, subcategories);
+        }
+        const options = new Map<string, { name: string; count: number }[]>();
+        for (const [parent, children] of counts) {
+            options.set(parent, Array.from(children, ([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name)));
+        }
+        return options;
+    }, [products]);
     const filtered = useMemo(() => {
         const term = query.trim().toLowerCase();
         const max = maxPrice.trim() ? Number(maxPrice) : Infinity;
         const result = products.filter(p => {
-            const matchesCategory = category === 'All' || p.category.toLowerCase() === category.toLowerCase();
-            const matchesSearch = !term || [p.title, p.description, p.category, p.vendor_business_name || '', p.location || '', p.condition || 'new', ...(p.tags || [])].join(' ').toLowerCase().includes(term);
+            const matchesCategory = matchesStorefrontCategory(p.category, category);
+            const matchesSubcategory = matchesStorefrontSubcategory(p.subcategory, subcategory);
+            const matchesSearch = !term || [p.title, p.description, p.category, p.subcategory || '', p.vendor_business_name || '', p.location || '', p.condition || 'new', ...(p.tags || [])].join(' ').toLowerCase().includes(term);
             const matchesCondition = condition === 'all' || (p.condition || 'new') === condition;
             const matchesAvailability = !availableOnly || (p.is_available !== false && (p.available_quantity ?? 0) > 0);
             const matchesPrice = Number.isFinite(max) ? p.price <= max : true;
-            return matchesCategory && matchesSearch && matchesCondition && matchesAvailability && matchesPrice;
+            return matchesCategory && matchesSubcategory && matchesSearch && matchesCondition && matchesAvailability && matchesPrice;
         });
         return result.sort((a, b) => {
             if (sort === 'price-low')
@@ -71,10 +107,10 @@ export default function Storefront({ products, topSellingProducts = [], trending
                 return a.title.localeCompare(b.title);
             return 0;
         });
-    }, [products, query, category, sort, condition, availableOnly, maxPrice]);
+    }, [products, query, category, subcategory, sort, condition, availableOnly, maxPrice]);
     const latest = products.filter(p => p.is_latest).slice().reverse();
     const topSelling = topSellingProducts.length ? topSellingProducts : products.filter(p => p.is_top_selling);
-    const groups = Array.from(new Set(products.map(p => p.category))).filter(Boolean);
+    const groups = Array.from(new Set(products.map(p => normalizeProductMainCategory(p.category)))).filter(Boolean);
     const moveToResults = () => {
         requestAnimationFrame(() => {
             document.getElementById('all-products')?.scrollIntoView({
@@ -89,23 +125,101 @@ export default function Storefront({ products, topSellingProducts = [], trending
     };
     const handleCategoryChange = (value: string) => {
         setCategory(value);
+        setSubcategory('All');
+        setOpenCategory(null);
+        moveToResults();
+    };
+    const handleCategoryTabClick = (value: string) => {
+        setCategory(value);
+        setSubcategory('All');
+        setOpenCategory(subcategoriesByCategory.has(value) ? value : null);
+        moveToResults();
+    };
+    const handleSubcategoryChange = (parent: string, value: string) => {
+        setCategory(parent);
+        setSubcategory(value);
+        setOpenCategory(parent);
         moveToResults();
     };
     return (<main className="mx-auto max-w-7xl px-4 pb-20 pt-5 sm:px-6">
       <form onSubmit={handleSearch} className="sticky top-[58px] z-20 -mx-4 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
         <div className="mx-auto flex max-w-7xl flex-col gap-2 sm:flex-row sm:items-center">
           <label className="relative min-w-0 flex-1"><span className="sr-only">Search the store</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search products, brands, sellers…" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-violet-500 focus:bg-white"/></label>
-          <div className="flex flex-wrap items-center gap-2">
-            <select aria-label="Filter category" value={category} onChange={e => handleCategoryChange(e.target.value)} className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold sm:w-40"><option value="All">All categories</option>{categoryOptions.filter(c => c !== 'All').map(c => <option key={c} value={c}>{c}</option>)}</select>
-            <select aria-label="Filter condition" value={condition} onChange={e => setCondition(e.target.value)} className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold sm:w-36"><option value="all">Any condition</option><option value="new">New</option><option value="used">Used</option><option value="spare-part">Spare parts</option></select>
-            <select aria-label="Sort products" value={sort} onChange={e => setSort(e.target.value)} className="min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold sm:w-44"><option value="featured">Featured</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="name">Name A–Z</option></select>
-            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-semibold text-slate-600"><input type="checkbox" checked={availableOnly} onChange={e => setAvailableOnly(e.target.checked)} className="h-4 w-4 rounded border-slate-300"/> In stock only</label>
-            <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-600">Max price <input value={maxPrice} onChange={e => setMaxPrice(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" placeholder="Any" className="w-24 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"/></label>
-            <button type="button" onClick={() => { setQuery(''); setCategory('All'); setSort('featured'); setCondition('all'); setAvailableOnly(false); setMaxPrice(''); }} className="rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-600 hover:border-slate-400">Clear filters</button>
+          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap sm:justify-end">
+            <select aria-label="Filter category" value={category} onChange={e => handleCategoryChange(e.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold sm:w-40"><option value="All">All categories</option>{categoryOptions.filter(c => c !== 'All').map(c => <option key={c} value={c}>{c}</option>)}</select>
+            <select aria-label="Filter condition" value={condition} onChange={e => setCondition(e.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold sm:w-36"><option value="all">Any condition</option><option value="new">New</option><option value="used">Used</option><option value="spare-part">Spare parts</option></select>
+            <select aria-label="Sort products" value={sort} onChange={e => setSort(e.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold sm:w-44"><option value="featured">Featured</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="name">Name A–Z</option></select>
+            <label className="flex h-10 min-w-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-600 sm:px-3"><input type="checkbox" checked={availableOnly} onChange={e => setAvailableOnly(e.target.checked)} className="h-4 w-4 shrink-0 rounded border-slate-300"/> In stock only</label>
+            <label className="flex h-10 min-w-0 items-center justify-between gap-1 rounded-xl border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-600 sm:gap-2 sm:px-3"><span className="shrink-0">Max price</span><input value={maxPrice} onChange={e => setMaxPrice(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" placeholder="Any" className="h-8 w-14 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2 sm:w-24 sm:px-3"/></label>
+            <button type="button" onClick={() => { setQuery(''); setCategory('All'); setSubcategory('All'); setOpenCategory(null); setSort('featured'); setCondition('all'); setAvailableOnly(false); setMaxPrice(''); }} className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 px-4 text-sm font-bold text-slate-600 hover:border-slate-400">Clear filters</button>
           </div>
         </div>
       </form>
-      <section aria-label="Shop categories" className="sticky top-[260px] z-10 lg:top-[120px] -mx-4 border-b border-slate-100 bg-slate-50/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6"><div className="mx-auto flex max-w-7xl gap-2 overflow-x-auto">{categoryOptions.map(c => <button key={c} onClick={() => handleCategoryChange(c)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-bold transition ${category === c ? 'bg-slate-950 text-white' : 'border border-slate-200 bg-white text-slate-600 hover:border-violet-400 hover:text-violet-700'}`}>{c}</button>)}</div></section>
+      <section
+        aria-labelledby="shop-categories-heading"
+        onMouseLeave={() => setOpenCategory(null)}
+        onBlurCapture={event => {
+            const nextTarget = event.relatedTarget;
+            if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) setOpenCategory(null);
+        }}
+        onKeyDown={event => {
+            if (event.key === 'Escape') setOpenCategory(null);
+        }}
+        className="relative -mx-4 border-b border-slate-100 bg-gradient-to-r from-violet-50 via-white to-slate-50 px-4 py-4 max-sm:sticky max-sm:top-[270px] max-sm:z-10 sm:-mx-6 sm:px-6 xl:sticky xl:top-[126px] xl:z-10"
+      >
+        <div className="relative mx-auto max-w-7xl">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <h2 id="shop-categories-heading" className="text-sm font-extrabold text-slate-950">Shop by category</h2>
+              <p className="mt-0.5 text-xs text-slate-500">Find your next favorite.</p>
+            </div>
+            {categoryOptions.length > 2
+                ? <span className="shrink-0 text-xs font-semibold text-violet-700 lg:hidden">Swipe to explore <span aria-hidden="true">→</span></span>
+                : null}
+            <span className="hidden shrink-0 text-xs font-semibold text-slate-500 lg:inline">{categoryOptions.length - 1} {categoryOptions.length === 2 ? 'category' : 'categories'}</span>
+          </div>
+          <div role="group" aria-label="Filter by category" className="flex snap-x gap-2 overflow-x-auto pb-1 scroll-smooth lg:flex-wrap lg:overflow-visible">
+            {categoryOptions.map(c => {
+                const count = c === 'All' ? products.length : categoryCounts.get(c) || 0;
+                const selected = category === c;
+                const subcategories = subcategoriesByCategory.get(c) || [];
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    aria-pressed={selected}
+                    aria-expanded={subcategories.length ? openCategory === c : undefined}
+                    aria-controls={openCategory === c && subcategories.length ? 'subcategory-menu' : undefined}
+                    onMouseEnter={() => setOpenCategory(subcategories.length ? c : null)}
+                    onFocus={() => {
+                        if (subcategories.length) setOpenCategory(c);
+                    }}
+                    onClick={() => handleCategoryTabClick(c)}
+                    className={`inline-flex h-11 max-w-[14rem] shrink-0 snap-start items-center gap-2 rounded-2xl border px-3 text-xs font-bold transition ${selected ? 'border-violet-700 bg-violet-700 text-white shadow-sm shadow-violet-900/15' : 'border-slate-200 bg-white/90 text-slate-700 hover:border-violet-300 hover:bg-white hover:text-violet-700'}`}
+                  >
+                    <span className="max-w-[9rem] truncate">{c}</span>
+                    <span className={`inline-flex h-6 min-w-6 items-center justify-center rounded-full px-1.5 text-[10px] font-extrabold ${selected ? 'bg-white/15 text-white' : 'bg-violet-50 text-violet-700'}`}>{count}</span>
+                  </button>
+                );
+            })}
+          </div>
+          {openCategory && subcategoriesByCategory.get(openCategory)?.length ? (
+            <div id="subcategory-menu" className="absolute left-0 right-0 top-full z-30 mt-2 rounded-2xl border border-violet-100 bg-white/95 p-3 shadow-xl backdrop-blur">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Browse {openCategory}</p>
+                <button type="button" aria-pressed={subcategory === 'All'} onClick={() => handleSubcategoryChange(openCategory, 'All')} className="text-xs font-bold text-violet-700 hover:text-violet-900">All {openCategory}</button>
+              </div>
+              <div role="group" aria-label={`${openCategory} subcategories`} className="flex flex-wrap gap-2">
+                {subcategoriesByCategory.get(openCategory)?.map(option => (
+                  <button key={option.name} type="button" aria-pressed={subcategory === option.name} onClick={() => handleSubcategoryChange(openCategory, option.name)} className={`inline-flex min-h-9 items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition ${subcategory === option.name ? 'border-violet-700 bg-violet-700 text-white' : 'border-slate-200 bg-slate-50 text-slate-700 hover:border-violet-300 hover:bg-violet-50 hover:text-violet-800'}`}>
+                    {option.name}<span className={`text-[10px] ${subcategory === option.name ? 'text-violet-100' : 'text-slate-400'}`}>{option.count}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      </section>
 
       {products.some(p => p.giveaway) && (<section className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-emerald-900">
           <p className="text-xs font-bold uppercase tracking-[.2em] text-emerald-700">Giveaway announcement</p>
@@ -147,9 +261,9 @@ export default function Storefront({ products, topSellingProducts = [], trending
       <ProductRail title="Trending now" subtitle="Recent shopper interest" products={trendingProducts}/>
 
 
-      {groups.map(group => <ProductRail key={group} title={group} subtitle="Curated for you" products={products.filter(p => p.category === group).slice(0, 8)}/>)}
+      {groups.map(group => <ProductRail key={group} title={group} subtitle="Curated for you" products={products.filter(p => normalizeProductMainCategory(p.category) === group).slice(0, 8)}/>)}
 
-      <section id="all-products" className="mt-16 scroll-mt-28">
+      <section id="all-products" className="mt-16 scroll-mt-[410px] sm:scroll-mt-64">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div><p className="text-xs font-bold uppercase tracking-[.2em] text-violet-600">The collection</p><h2 className="mt-1 text-3xl font-black text-slate-950">Explore products</h2></div>
           <span className="text-sm text-slate-500">{filtered.length} items</span>

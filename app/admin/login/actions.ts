@@ -16,7 +16,7 @@ export async function adminLoginAction(email: string, password: string) {
     }
 
     const session = await getSession();
-    if (!session || session.role !== 'admin') {
+    if (!session || (session.role !== 'admin' && session.role !== 'super_admin')) {
         await destroySession();
         return { success: false, error: 'This Supabase account is not registered as an active admin.' };
     }

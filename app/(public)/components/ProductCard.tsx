@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useCart } from './CartProvider';
 import { Product } from './types/store';
 import { useToast } from '../../components/ToastProvider';
+import { normalizeProductMainCategory } from '../../../lib/product-categories';
 export default function ProductCard({ product, compact = false }: {
     product: Product;
     compact?: boolean;
@@ -34,7 +35,8 @@ export default function ProductCard({ product, compact = false }: {
       </div>
       <div className="p-4">
         <Link href={`/product/${product.id}`}>
-          <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">{product.category}</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-violet-600">{normalizeProductMainCategory(product.category)}</span>
+          {product.subcategory && <span className="ml-1 rounded-full bg-violet-50 px-2 py-1 text-[10px] font-bold text-violet-700">{product.subcategory}</span>}
           <span className="ml-2 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-600">{(product.condition || 'new') === 'spare-part' ? 'Spare part' : product.condition || 'New'}</span>
           {product.location && <p className="mt-1 truncate text-xs text-slate-500">⌖ {product.location}</p>}
           <h3 className="mt-1 line-clamp-1 font-semibold text-slate-900">{product.title}</h3>

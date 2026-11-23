@@ -7,13 +7,13 @@ import { useToast } from '../../components/ToastProvider';
 import { useBranding } from '../../(public)/components/BrandingProvider';
 import PasswordInput from '../../components/PasswordInput';
 import { optimizeImageInput } from '../../../lib/image-optimizer';
+import { getProductSubcategories, PRODUCT_MAIN_CATEGORIES } from '../../../lib/product-categories';
 
 const businessFields = [
     { name: 'business_name', label: 'Business name', type: 'text', placeholder: 'Your store or business name', autoComplete: 'organization' },
     { name: 'owner_name', label: 'Owner full name', type: 'text', placeholder: 'Name of the primary contact', autoComplete: 'name' },
     { name: 'email', label: 'Email address', type: 'email', placeholder: 'you@example.com', autoComplete: 'email' },
     { name: 'whatsapp_number', label: 'WhatsApp number', type: 'tel', placeholder: 'Include your country code', autoComplete: 'tel' },
-    { name: 'business_category', label: 'Business category', type: 'text', placeholder: 'Fashion, accessories, etc.', autoComplete: 'off' },
     { name: 'business_address', label: 'Business address', type: 'text', placeholder: 'City and business location', autoComplete: 'street-address' },
 ] as const;
 
@@ -28,6 +28,9 @@ export default function VendorRegister() {
     const [error, setError] = useState('');
     const [whatsappUrl, setWhatsappUrl] = useState('');
     const [emailConfirmationRequired, setEmailConfirmationRequired] = useState(true);
+    const [mainCategory, setMainCategory] = useState('');
+    const [subcategory, setSubcategory] = useState('');
+    const subcategories = getProductSubcategories(mainCategory);
 
     async function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -110,6 +113,30 @@ export default function VendorRegister() {
                   <textarea required name="business_description" rows={4} placeholder="What do you sell, and what should customers know about your business?" className={`${fieldClass} resize-y`}/>
                   <span className="mt-1.5 block text-xs font-normal text-slate-500">A clear description helps us understand your products and business.</span>
                 </label>
+                <div className="mt-5 rounded-2xl border border-violet-100 bg-violet-50/60 p-4 sm:p-5">
+                  <h3 className="text-sm font-black text-slate-900">Your first product category</h3>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">Your first approved product must match this category and subcategory. You can request approval for additional products later.</p>
+                  <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <label className="block text-sm font-bold text-slate-700">
+                      Main category
+                      <select required name="product_main_category" value={mainCategory} onChange={event => { setMainCategory(event.target.value); setSubcategory(''); }} className={fieldClass}>
+                        <option value="" disabled>Select a main category</option>
+                        {PRODUCT_MAIN_CATEGORIES.map(value => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                    </label>
+                    <label className="block text-sm font-bold text-slate-700">
+                      Subcategory
+                      <select required name="product_subcategory" value={subcategory} onChange={event => setSubcategory(event.target.value)} disabled={!mainCategory} className={`${fieldClass} disabled:cursor-not-allowed disabled:opacity-60`}>
+                        <option value="" disabled>Select a subcategory</option>
+                        {subcategories.map(value => <option key={value} value={value}>{value}</option>)}
+                      </select>
+                    </label>
+                    {subcategory === 'Other' && <label className="block text-sm font-bold text-slate-700 sm:col-span-2">
+                      Specify the product or subcategory
+                      <input required maxLength={100} name="product_subcategory_custom" placeholder="For example, handmade baskets" className={fieldClass}/>
+                    </label>}
+                  </div>
+                </div>
               </section>
 
               <section aria-labelledby="seller-security-heading" className="border-t border-slate-100 pt-8">

@@ -52,6 +52,7 @@ model Product {
   isAvailable           Boolean  @default(false) @map("is_available")
   images                String[] @default([])
   category              String   @default("Other")
+  subcategory           String?
   tags                  String[] @default([])
   likesCount            Int      @default(0) @map("likes_count")
   vendorWhatsapp        String   @default("") @map("vendor_whatsapp")
@@ -84,6 +85,8 @@ model Vendor {
   status            String
   createdAt         String @map("created_at")
   updatedAt         String? @map("updated_at")
+  productPolicy     VendorProductPolicy?
+  productRequests   VendorProductRequest[]
 
   @@index([email])
   @@index([status])
@@ -102,6 +105,8 @@ model VendorRequest {
   businessAddress     String  @map("business_address")
   businessCategory    String  @map("business_category")
   businessDescription String  @map("business_description")
+  productMainCategory String  @default("Other Categories") @map("product_main_category")
+  productSubcategory  String  @default("Other") @map("product_subcategory")
   logo                String  @default("")
   vendorId            String? @map("vendor_id")
   createdAt           String  @map("created_at")
@@ -112,6 +117,41 @@ model VendorRequest {
   @@index([email])
   @@index([status])
   @@map("vendor_requests")
+}
+
+model VendorProductPolicy {
+  vendorId                   String  @id @map("vendor_id")
+  mainCategory               String  @map("main_category")
+  subcategory                String
+  initialProductId           String? @unique @map("initial_product_id")
+  initialProductPublishedAt  String? @map("initial_product_published_at")
+  createdAt                  String  @map("created_at")
+  vendor                     Vendor  @relation(fields: [vendorId], references: [vendorId], onDelete: Cascade)
+
+  @@map("vendor_product_policies")
+}
+
+model VendorProductRequest {
+  requestId           String  @id @map("request_id")
+  vendorId            String  @map("vendor_id")
+  mainCategory        String  @map("main_category")
+  subcategory         String
+  productName         String  @map("product_name")
+  productDescription  String  @map("product_description")
+  productImage        String? @map("product_image")
+  reason              String
+  status              String  @default("pending")
+  adminComment        String? @map("admin_comment")
+  reviewedBy          String? @map("reviewed_by")
+  createdAt           String  @map("created_at")
+  reviewedAt          String? @map("reviewed_at")
+  publishedProductId  String? @unique @map("published_product_id")
+  fulfilledAt         String? @map("fulfilled_at")
+  vendor              Vendor  @relation(fields: [vendorId], references: [vendorId], onDelete: Cascade)
+
+  @@index([vendorId, status])
+  @@index([status, createdAt])
+  @@map("vendor_product_requests")
 }
 
 model OrderRecord {
@@ -127,6 +167,10 @@ model OrderRecord {
   createdAt        String                   @map("created_at")
   whatsappHandoffAt String?                 @map("whatsapp_handoff_at")
   vendorWhatsapp   String?                  @map("vendor_whatsapp")
+  receiptConfirmationTokenHash String?       @unique(map: "orders_receipt_confirmation_token_hash_key") @map("receipt_confirmation_token_hash")
+  receiptConfirmationExpiresAt String?       @map("receipt_confirmation_expires_at")
+  receiptConfirmationSentAt String?          @map("receipt_confirmation_sent_at")
+  customerReceivedAt String?                 @map("customer_received_at")
   items            OrderLine[]
   statusHistory    OrderStatusChange[]
 

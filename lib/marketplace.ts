@@ -1,8 +1,17 @@
 'use server';
 import { readJson, updateJson, nextId } from './json-store';
 import { CartItem, Order, OrderItem, Product } from '../app/(public)/components/types/store';
+import type { OrderReceiptConfirmation } from '../app/(public)/components/types/store';
 import { requireAdmin, requireVendor } from './auth';
 import { revalidatePath } from 'next/cache';
+import { createOrderReceiptToken, hashOrderReceiptToken, isOrderReceiptConfirmationExpired, matchesOrderReceiptToken } from './order-receipt-tokens';
+
+function withoutReceiptTokenHash(order: Order): Order {
+    const safeOrder = { ...order };
+    delete safeOrder.receipt_confirmation_token_hash;
+    return safeOrder;
+}
+
 export async function createWhatsAppOrders(items: CartItem[], customerName?: string, customerPhone?: string, checkoutId?: string) {
     if (!items.length)
         return { success: false, error: 'Cart is empty' };
@@ -10,7 +19,7 @@ export async function createWhatsAppOrders(items: CartItem[], customerName?: str
         const existing = await readJson<Order[]>('orders.json', []);
         const matches = existing.filter(o => o.checkout_id === checkoutId);
         if (matches.length)
-            return { success: true, orders: matches, duplicate: true };
+            return { success: true, orders: matches.map(withoutReceiptTokenHash), duplicate: true };
     }
     const grouped = new Map<string, CartItem[]>();
     for (const item of items) {
@@ -53,7 +62,89 @@ export async function createWhatsAppOrders(items: CartItem[], customerName?: str
         await updateJson<Order[]>('orders.json', list => [...list, order], []);
         orders.push(order);
     }
-    return { success: true, orders };
+    return { success: true, orders: orders.map(withoutReceiptTokenHash) };
+}
+
+export async function createOrderReceiptConfirmationLinkAction(orderId: string) {
+    const session = await requireVendor();
+    const id = String(orderId || '').trim();
+    const order = (await readJson<Order[]>('orders.json', [])).find(item => item.order_id === id);
+    if (!order) return { success: false, error: 'Order not found.' };
+    if (order.vendor_id !== session.vendorId) return { success: false, error: 'You cannot send a confirmation link for another vendor’s order.' };
+    if (order.status !== 'Sold') return { success: false, error: 'Mark the order completed before requesting customer receipt confirmation.' };
+    if (order.customer_received_at) return { success: false, error: 'The customer has already confirmed receipt.' };
+
+    const { token, tokenHash } = createOrderReceiptToken();
+    const sentAt = new Date().toISOString();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    let updated = false;
+    await updateJson<Order[]>('orders.json', current => {
+        updated = false;
+        return current.map(item => {
+            if (item.order_id !== id || item.vendor_id !== session.vendorId ||
+                item.status !== 'Sold' || item.customer_received_at) return item;
+            updated = true;
+            return {
+                ...item,
+                receipt_confirmation_token_hash: tokenHash,
+                receipt_confirmation_expires_at: expiresAt,
+                receipt_confirmation_sent_at: sentAt,
+            };
+        });
+    }, []);
+    if (!updated) return { success: false, error: 'The order changed before the link could be created. Refresh and try again.' };
+    revalidatePath('/vendor/dashboard');
+    revalidatePath('/admin');
+    return { success: true, confirmationPath: `/order-confirmation/${token}`, expiresAt };
+}
+
+export async function getOrderReceiptConfirmationAction(token: string): Promise<OrderReceiptConfirmation | null> {
+    const tokenHash = hashOrderReceiptToken(String(token || '').trim());
+    if (!tokenHash) return null;
+    const order = (await readJson<Order[]>('orders.json', [])).find(item =>
+        matchesOrderReceiptToken(token, item.receipt_confirmation_token_hash));
+    if (!order || order.status !== 'Sold' || !order.receipt_confirmation_sent_at || !order.receipt_confirmation_expires_at) {
+        return null;
+    }
+    if (isOrderReceiptConfirmationExpired(order.receipt_confirmation_expires_at) && !order.customer_received_at) return null;
+    return {
+        order_id: order.order_id,
+        items: order.items.map(item => ({ product_name: item.product_name, quantity: item.quantity })),
+        total: order.total,
+        expires_at: order.receipt_confirmation_expires_at,
+        customer_received_at: order.customer_received_at,
+    };
+}
+
+export async function confirmCustomerReceiptAction(token: string) {
+    const normalizedToken = String(token || '').trim();
+    if (!hashOrderReceiptToken(normalizedToken)) {
+        return { success: false, error: 'This confirmation link is invalid or expired.' };
+    }
+    let outcome: 'invalid' | 'already-confirmed' | 'confirmed' = 'invalid';
+    const confirmedAt = new Date().toISOString();
+    await updateJson<Order[]>('orders.json', current => {
+        outcome = 'invalid';
+        return current.map(order => {
+            if (!matchesOrderReceiptToken(normalizedToken, order.receipt_confirmation_token_hash)) return order;
+            if (order.status !== 'Sold' || !order.receipt_confirmation_sent_at ||
+                isOrderReceiptConfirmationExpired(order.receipt_confirmation_expires_at)) return order;
+            if (order.customer_received_at) {
+                outcome = 'already-confirmed';
+                return order;
+            }
+            outcome = 'confirmed';
+            return { ...order, customer_received_at: confirmedAt };
+        });
+    }, []);
+    if (outcome === 'invalid') {
+        return { success: false, error: 'This confirmation link is invalid or expired.' };
+    }
+    if (outcome === 'confirmed') {
+        revalidatePath('/admin');
+        revalidatePath('/vendor/dashboard');
+    }
+    return { success: true, alreadyConfirmed: outcome === 'already-confirmed' };
 }
 export async function updateOrderStatus(orderId: string, status: Order['status']) {
     const session = await (async () => { try {
@@ -150,9 +241,9 @@ export async function recordEngagement(type: 'view' | 'like' | 'unlike' | 'enqui
     await updateJson<any[]>('analytics.json', a => [...a, { event_id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, type, product_id: productId, vendor_id: product.vendor_id, visitor_id: visitorId, timestamp: now, order_id: orderId }], []);
     return { success: true };
 }
-export async function getVendorOrdersAction() { const session = await requireVendor(); return (await readJson<Order[]>('orders.json', [])).filter(o => o.vendor_id === session.vendorId); }
+export async function getVendorOrdersAction() { const session = await requireVendor(); return (await readJson<Order[]>('orders.json', [])).filter(o => o.vendor_id === session.vendorId).map(withoutReceiptTokenHash); }
 export async function getVendorStatsAction() { const session = await requireVendor(); const [products, orders, analytics] = await Promise.all([readJson<Product[]>('products.json', []), readJson<Order[]>('orders.json', []), readJson<any[]>('analytics.json', [])]); const own = products.filter(p => p.vendor_id === session.vendorId), ord = orders.filter(o => o.vendor_id === session.vendorId), sold = ord.filter(o => o.status === 'Sold'); return { products: own.length, active: own.filter(p => p.is_available).length, inventory: own.reduce((s, p) => s + (p.available_quantity || 0), 0), enquiries: analytics.filter(a => a.vendor_id === session.vendorId && a.type === 'enquiry').length, pending: ord.filter(o => o.status === 'Pending').length, confirmed: ord.filter(o => o.status === 'Acknowledged' || o.status === 'Processing').length, sold: sold.length, revenue: sold.reduce((s, o) => s + o.total, 0) }; }
-export async function getAdminOrdersAction() { await requireAdmin(); return readJson<Order[]>('orders.json', []); }
+export async function getAdminOrdersAction() { await requireAdmin(); return (await readJson<Order[]>('orders.json', [])).map(withoutReceiptTokenHash); }
 export async function getVendorProfileAction() { const session = await requireVendor(); const vendors = await readJson<any[]>('vendors.json', []); const vendor = vendors.find(v => v.vendor_id === session.vendorId); if (!vendor)
     return null; return { vendor_id: vendor.vendor_id, business_name: vendor.business_name, whatsapp_number: vendor.whatsapp_number || '' }; }
 export async function updateVendorWhatsAppAction(number: string) { const session = await requireVendor(); const normalized = number.replace(/[^0-9]/g, ''); if (normalized.length < 10 || normalized.length > 15)

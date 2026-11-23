@@ -14,8 +14,9 @@ const defaults: Record<JsonFileName, unknown> = {
 };
 
 const documentFiles = new Set<JsonFileName>(['counters.json', 'music_settings.json', 'site_settings.json']);
-type StoreTransaction = Pick<Prisma.TransactionClient,
+export type StoreTransaction = Pick<Prisma.TransactionClient,
     | 'storeRecord' | 'storeSetting' | 'storeCounter' | 'product' | 'vendor' | 'vendorRequest'
+    | 'vendorProductPolicy' | 'vendorProductRequest'
     | 'orderRecord' | 'analyticsEvent' | 'productLike' | 'customerInquiry'
     | 'productFeedback' | 'musicTrack'>;
 
@@ -67,7 +68,8 @@ async function readFromStore<T>(tx: StoreTransaction, name: JsonFileName, fallba
                 size_prices: row.sizePrices ?? undefined, giveaway: row.giveaway,
                 giveaway_announcement: row.giveawayAnnouncement ?? undefined,
                 available_quantity: row.availableQuantity, is_available: row.isAvailable,
-                images: row.images, category: row.category, tags: row.tags, likes_count: row.likesCount,
+                images: row.images, category: row.category, subcategory: row.subcategory ?? undefined,
+                tags: row.tags, likes_count: row.likesCount,
                 vendor_whatsapp: row.vendorWhatsapp, vendor_business_name: row.vendorBusinessName ?? undefined,
                 location: row.location ?? undefined, condition: row.condition ?? undefined,
                 detail_gallery_enabled: row.detailGalleryEnabled, is_latest: row.isLatest,
@@ -95,6 +97,7 @@ async function readFromStore<T>(tx: StoreTransaction, name: JsonFileName, fallba
                 owner_name: row.ownerName, email: row.email, supabase_uid: row.supabaseUid ?? undefined,
                 whatsapp_number: row.whatsappNumber, business_address: row.businessAddress,
                 business_category: row.businessCategory, business_description: row.businessDescription,
+                product_main_category: row.productMainCategory, product_subcategory: row.productSubcategory,
                 logo: row.logo, vendor_id: row.vendorId ?? undefined, created_at: row.createdAt,
                 approved_at: row.approvedAt ?? undefined, rejected_at: row.rejectedAt ?? undefined,
                 rejection_id: row.rejectionId ?? undefined,
@@ -112,6 +115,10 @@ async function readFromStore<T>(tx: StoreTransaction, name: JsonFileName, fallba
                 total: row.total, checkout_method: row.checkoutMethod, status: row.status,
                 created_at: row.createdAt, whatsapp_handoff_at: row.whatsappHandoffAt ?? undefined,
                 vendor_whatsapp: row.vendorWhatsapp ?? undefined,
+                receipt_confirmation_token_hash: row.receiptConfirmationTokenHash ?? undefined,
+                receipt_confirmation_expires_at: row.receiptConfirmationExpiresAt ?? undefined,
+                receipt_confirmation_sent_at: row.receiptConfirmationSentAt ?? undefined,
+                customer_received_at: row.customerReceivedAt ?? undefined,
                 items: row.items.map(item => ({
                     product_id: item.productId, vendor_id: item.vendorId, product_name: item.productName,
                     selected_size: item.selectedSize ?? undefined, product_image: item.productImage ?? undefined,
@@ -196,35 +203,56 @@ async function writeToStore(tx: StoreTransaction, name: JsonFileName, value: unk
 
     switch (name) {
         case 'products.json': {
-            await tx.product.deleteMany();
-            if (items.length) await tx.product.createMany({ data: items.map(({ data, index }) => ({
+            const productIds = items.map(({ data }) => String(data.id));
+            await tx.product.deleteMany({
+                where: productIds.length ? { id: { notIn: productIds } } : {},
+            });
+            for (const { data, index } of items) {
+                const productData = {
                 id: String(data.id), sortOrder: index, vendorId: String(data.vendor_id || ''),
                 title: String(data.title || ''), description: String(data.description || ''),
-                price: Number(data.price || 0), compareAtPrice: data.compare_at_price == null ? undefined : Number(data.compare_at_price),
-                sizePrices: data.size_prices == null ? undefined : asJson(data.size_prices),
-                giveaway: Boolean(data.giveaway), giveawayAnnouncement: data.giveaway_announcement == null ? undefined : String(data.giveaway_announcement),
+                price: Number(data.price || 0), compareAtPrice: data.compare_at_price == null ? null : Number(data.compare_at_price),
+                sizePrices: data.size_prices == null ? Prisma.JsonNull : asJson(data.size_prices),
+                giveaway: Boolean(data.giveaway), giveawayAnnouncement: data.giveaway_announcement == null ? null : String(data.giveaway_announcement),
                 availableQuantity: Number(data.available_quantity || 0), isAvailable: Boolean(data.is_available),
                 images: Array.isArray(data.images) ? data.images.map(String) : [], category: String(data.category || 'Other'),
+                subcategory: data.subcategory == null ? null : String(data.subcategory),
                 tags: Array.isArray(data.tags) ? data.tags.map(String) : [], likesCount: Number(data.likes_count || 0),
-                vendorWhatsapp: String(data.vendor_whatsapp || ''), vendorBusinessName: data.vendor_business_name == null ? undefined : String(data.vendor_business_name),
-                location: data.location == null ? undefined : String(data.location), condition: data.condition == null ? undefined : String(data.condition),
+                vendorWhatsapp: String(data.vendor_whatsapp || ''), vendorBusinessName: data.vendor_business_name == null ? null : String(data.vendor_business_name),
+                location: data.location == null ? null : String(data.location), condition: data.condition == null ? null : String(data.condition),
                 detailGalleryEnabled: Boolean(data.detail_gallery_enabled), isLatest: Boolean(data.is_latest),
-                isTopSelling: Boolean(data.is_top_selling), relatedProductsMode: data.related_products_mode == null ? undefined : String(data.related_products_mode),
+                isTopSelling: Boolean(data.is_top_selling), relatedProductsMode: data.related_products_mode == null ? null : String(data.related_products_mode),
                 relatedProductIds: Array.isArray(data.related_product_ids) ? data.related_product_ids.map(String) : [],
-            })) as any });
+                };
+                await tx.product.upsert({
+                    where: { id: productData.id },
+                    create: productData,
+                    update: productData,
+                });
+            }
             return;
         }
         case 'vendors.json': {
-            await tx.vendor.deleteMany();
-            if (items.length) await tx.vendor.createMany({ data: items.map(({ data, index }) => ({
+            const vendorIds = items.map(({ data }) => String(data.vendor_id));
+            await tx.vendor.deleteMany({
+                where: vendorIds.length ? { vendorId: { notIn: vendorIds } } : {},
+            });
+            for (const { data, index } of items) {
+                const vendorData = {
                 vendorId: String(data.vendor_id), sortOrder: index, businessName: String(data.business_name || ''),
                 ownerName: String(data.owner_name || ''), email: String(data.email || ''),
                 whatsappNumber: String(data.whatsapp_number || ''), businessAddress: String(data.business_address || ''),
                 businessCategory: String(data.business_category || ''), businessDescription: String(data.business_description || ''),
                 logo: String(data.logo || ''), status: String(data.status || 'suspended'),
                 createdAt: String(data.created_at || new Date().toISOString()),
-                updatedAt: data.updated_at == null ? undefined : String(data.updated_at),
-            })) as any });
+                updatedAt: data.updated_at == null ? null : String(data.updated_at),
+                };
+                await tx.vendor.upsert({
+                    where: { vendorId: vendorData.vendorId },
+                    create: vendorData,
+                    update: vendorData,
+                });
+            }
             return;
         }
         case 'vendor_requests.json': {
@@ -235,6 +263,8 @@ async function writeToStore(tx: StoreTransaction, name: JsonFileName, value: unk
                 email: String(data.email || ''), supabaseUid: data.supabase_uid == null ? undefined : String(data.supabase_uid),
                 whatsappNumber: String(data.whatsapp_number || ''), businessAddress: String(data.business_address || ''),
                 businessCategory: String(data.business_category || ''), businessDescription: String(data.business_description || ''),
+                productMainCategory: String(data.product_main_category || 'Other Categories'),
+                productSubcategory: String(data.product_subcategory || 'Other'),
                 logo: String(data.logo || ''), vendorId: data.vendor_id == null ? undefined : String(data.vendor_id),
                 createdAt: String(data.created_at || new Date().toISOString()),
                 approvedAt: data.approved_at == null ? undefined : String(data.approved_at),
@@ -255,6 +285,10 @@ async function writeToStore(tx: StoreTransaction, name: JsonFileName, value: unk
                     createdAt: String(data.created_at || new Date().toISOString()),
                     whatsappHandoffAt: data.whatsapp_handoff_at == null ? undefined : String(data.whatsapp_handoff_at),
                     vendorWhatsapp: data.vendor_whatsapp == null ? undefined : String(data.vendor_whatsapp),
+                    receiptConfirmationTokenHash: data.receipt_confirmation_token_hash == null ? undefined : String(data.receipt_confirmation_token_hash),
+                    receiptConfirmationExpiresAt: data.receipt_confirmation_expires_at == null ? undefined : String(data.receipt_confirmation_expires_at),
+                    receiptConfirmationSentAt: data.receipt_confirmation_sent_at == null ? undefined : String(data.receipt_confirmation_sent_at),
+                    customerReceivedAt: data.customer_received_at == null ? undefined : String(data.customer_received_at),
                     items: { create: (Array.isArray(data.items) ? data.items : []).map((line: Record<string, any>, sortOrder: number) => ({
                         sortOrder, productId: String(line.product_id || ''), vendorId: String(line.vendor_id || ''),
                         productName: String(line.product_name || ''), selectedSize: line.selected_size == null ? undefined : String(line.selected_size),
@@ -351,6 +385,17 @@ export async function updateJson<T>(name: JsonFileName, updater: (current: T) =>
         const next = updater(current);
         await writeToStore(tx, name, next);
         return next;
+    });
+}
+
+export async function updateProductsAtomically<T, R>(
+    updater: (current: T[], tx: StoreTransaction) => Promise<{ next: T[]; result: R }>,
+): Promise<R> {
+    return serializable(async tx => {
+        const current = await readFromStore<T[]>(tx, 'products.json', []);
+        const { next, result } = await updater(current, tx);
+        await writeToStore(tx, 'products.json', next);
+        return result;
     });
 }
 

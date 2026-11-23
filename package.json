@@ -16,7 +16,8 @@
     "db:migrate-assets": "node --conditions=react-server scripts/run-server-tsx.mjs scripts/migrate-assets-to-supabase.ts",
     "db:prune-assets": "node --conditions=react-server scripts/run-server-tsx.mjs scripts/prune-unused-assets.ts",
     "db:structure-assets": "node --conditions=react-server scripts/run-server-tsx.mjs scripts/structure-store-assets.ts",
-    "auth:reset": "tsx scripts/reset-auth-credentials.ts"
+    "auth:reset": "tsx scripts/reset-auth-credentials.ts",
+    "supabase:verify-secret": "tsx scripts/verify-supabase-secret.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

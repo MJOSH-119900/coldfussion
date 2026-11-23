@@ -5,7 +5,7 @@ import { createSupabaseServerClient } from '../server/supabase';
 import { createSupabaseAdminClient } from '../server/supabase-admin';
 
 type Session = {
-    role: 'admin' | 'vendor';
+    role: 'admin' | 'super_admin' | 'vendor';
     vendorId?: string;
     email: string;
     uid: string;
@@ -35,8 +35,22 @@ export async function getSession(): Promise<Session | null> {
 
     const metadata = user.app_metadata as AppMetadata;
     const email = normalizeEmail(user.email);
-    if (metadata.role === 'admin')
+    if (metadata.role === 'admin' || metadata.role === 'super_admin') {
+        if (metadata.role === 'super_admin') return { role: 'super_admin', email, uid: user.id };
+        // Upgrade the original first-admin account on existing deployments.
+        // The first account was the only one creatable through setup-token registration.
+        const admin = createSupabaseAdminClient();
+        const { data: page, error: listError } = await admin.auth.admin.listUsers({ page: 1, perPage: 1000 });
+        if (!listError) {
+            const superAdminExists = page.users.some(candidate => candidate.app_metadata?.role === 'super_admin');
+            const firstAdmin = page.users.filter(candidate => candidate.app_metadata?.role === 'admin').sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
+            if (!superAdminExists && firstAdmin) {
+                const { error: upgradeError } = await admin.auth.admin.updateUserById(firstAdmin.id, { app_metadata: { role: 'super_admin' } });
+                if (!upgradeError && firstAdmin.id === user.id) return { role: 'super_admin', email, uid: user.id };
+            }
+        }
         return { role: 'admin', email, uid: user.id };
+    }
 
     if (metadata.role === 'vendor' && typeof metadata.vendor_id === 'string') {
         const vendors = await readJson<Array<{ vendor_id?: string; status?: string }>>('vendors.json', []);
@@ -63,7 +77,15 @@ export async function requireRole(role: 'admin' | 'vendor') {
 }
 
 export async function requireAdmin() {
-    return requireRole('admin');
+    const session = await getSession();
+    if (!session || (session.role !== 'admin' && session.role !== 'super_admin')) throw new Error('Unauthorized');
+    return session;
+}
+
+export async function requireSuperAdmin() {
+    const session = await getSession();
+    if (!session || session.role !== 'super_admin') throw new Error('Unauthorized');
+    return session;
 }
 
 export async function requireVendor() {
@@ -77,7 +99,7 @@ export async function hasRegisteredAdmin() {
     for (let page = 1; ; page++) {
         const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
         if (error) throw new Error(`Could not check Supabase Auth admins: ${error.message}`);
-        if (data.users.some(user => user.app_metadata?.role === 'admin')) return true;
+        if (data.users.some(user => user.app_metadata?.role === 'admin' || user.app_metadata?.role === 'super_admin')) return true;
         if (data.users.length < 1000) return false;
     }
 }
