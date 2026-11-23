@@ -141,17 +141,17 @@ export default function VendorRegister() {
 
               <section aria-labelledby="seller-security-heading" className="border-t border-slate-100 pt-8">
                 <div className="mb-5">
-                  <h2 id="seller-security-heading" className="text-lg font-black text-slate-900">Secure account setup</h2>
-                  <p className="mt-1 text-sm text-slate-500">Create a password of at least 12 characters. We’ll confirm your email before your application is reviewed.</p>
+                  <h2 id="seller-security-heading" className="text-lg font-black text-slate-900">Secure account access</h2>
+                  <p className="mt-1 text-sm text-slate-500">New accounts need a password of at least 12 characters and email confirmation. If you already have an account, enter its current password in both fields to apply with it.</p>
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="text-sm font-bold text-slate-700">
                     <label htmlFor="vendor-register-password">Password</label>
-                    <PasswordInput id="vendor-register-password" required minLength={12} name="password" autoComplete="new-password" placeholder="At least 12 characters" wrapperClassName="mt-2" className={passwordFieldClass} toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
+                    <PasswordInput id="vendor-register-password" required name="password" autoComplete="current-password" placeholder="Current password or 12+ characters" wrapperClassName="mt-2" className={passwordFieldClass} toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
                   </div>
                   <div className="text-sm font-bold text-slate-700">
                     <label htmlFor="vendor-register-password-confirm">Confirm password</label>
-                    <PasswordInput id="vendor-register-password-confirm" required minLength={12} name="password_confirmation" autoComplete="new-password" placeholder="Enter it again" wrapperClassName="mt-2" className={passwordFieldClass} toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
+                    <PasswordInput id="vendor-register-password-confirm" required name="password_confirmation" autoComplete="current-password" placeholder="Enter the same password" wrapperClassName="mt-2" className={passwordFieldClass} toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
                   </div>
                 </div>
               </section>

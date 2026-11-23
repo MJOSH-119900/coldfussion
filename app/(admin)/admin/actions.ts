@@ -693,28 +693,44 @@ export async function registerVendorAction(data: FormData) {
         return { success: false, error: 'Enter a valid email address.' };
     if (!productSubcategory || !isValidProductCategoryPair(productMainCategory, productSubcategory))
         return { success: false, error: 'Select a valid product main category and subcategory.' };
-    if (password.length < 12)
-        return { success: false, error: 'Use a password of at least 12 characters.' };
     if (password !== confirmation)
         return { success: false, error: 'Passwords do not match.' };
-    const breachStatus = await checkPasswordAgainstBreaches(password);
-    if (breachStatus === 'breached')
-        return { success: false, error: 'This password appears in known data breaches. Choose a different password.' };
-    if (breachStatus === 'unavailable')
-        return { success: false, error: 'Could not check the password against breach data. Try again shortly.' };
     const vendors = await readJson<any[]>('vendors.json', []);
     const requests = await readJson<any[]>('vendor_requests.json', []);
     if (vendors.some(v => String(v.email || '').trim().toLowerCase() === email && ['approved', 'active'].includes(String(v.status))) || requests.some(r => String(r.email || '').trim().toLowerCase() === email && r.status === 'pending'))
         return { success: false, error: 'This email is already registered or pending approval.' };
     const supabase = await createSupabaseServerClient();
-    const { data: signup, error: signupError } = await supabase.auth.signUp({
-        email,
-        password,
-        options: { emailRedirectTo: getAuthCallbackUrl('/vendor/login') },
-    });
-    if (signupError || !signup.user || !signup.user.identities?.length)
-        return { success: false, error: 'This email may already have an account. Sign in or request a password reset.' };
-    const needsEmailConfirmation = !signup.session && !signup.user.email_confirmed_at;
+    let userId: string | undefined;
+    let needsEmailConfirmation = false;
+    let newAccountError = password.length < 12 ? 'Use a password of at least 12 characters for a new account.' : '';
+    if (!newAccountError) {
+        const breachStatus = await checkPasswordAgainstBreaches(password);
+        if (breachStatus === 'breached') newAccountError = 'This password appears in known data breaches. Choose a different password for a new account.';
+        else if (breachStatus === 'unavailable') newAccountError = 'Could not check the password against breach data. Try again shortly.';
+        else {
+            const { data: signup, error: signupError } = await supabase.auth.signUp({
+                email,
+                password,
+                options: { emailRedirectTo: getAuthCallbackUrl('/vendor/login') },
+            });
+            if (!signupError && signup.user && signup.user.identities?.length) {
+                userId = signup.user.id;
+                needsEmailConfirmation = !signup.session && !signup.user.email_confirmed_at;
+            }
+        }
+    }
+    // An existing shopper or other account can apply as a vendor after proving
+    // ownership with its current password. Never attach an application by email alone.
+    if (!userId) {
+        const { data: existingAccount, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError || !existingAccount.user)
+            return { success: false, error: newAccountError || 'This email already has an account. Enter its current password, or reset the password before applying.' };
+        if (existingAccount.user.app_metadata?.role === 'admin') {
+            await supabase.auth.signOut();
+            return { success: false, error: 'This email belongs to an administrator account. Use a different email address.' };
+        }
+        userId = existingAccount.user.id;
+    }
     const requestId = await nextId('VREQ', 4, 'vendorRequest');
     const logoFile = data.get('business_logo');
     let logo = '';
@@ -725,7 +741,7 @@ export async function registerVendorAction(data: FormData) {
         const fileName = `logo-${Date.now()}${safe}`;
         logo = await uploadStoreAsset(`vendor-requests/${requestId}/${fileName}`, Buffer.from(await logoFile.arrayBuffer()), logoFile.type || 'application/octet-stream');
     }
-    const request = { request_id: requestId, status: 'pending', business_name: String(data.get('business_name') || '').trim(), owner_name: String(data.get('owner_name') || '').trim(), email, supabase_uid: signup.user.id, whatsapp_number: String(data.get('whatsapp_number') || '').trim(), business_address: String(data.get('business_address') || '').trim(), business_category: productMainCategory, business_description: String(data.get('business_description') || '').trim(), product_main_category: productMainCategory, product_subcategory: productSubcategory, logo, created_at: new Date().toISOString() };
+    const request = { request_id: requestId, status: 'pending', business_name: String(data.get('business_name') || '').trim(), owner_name: String(data.get('owner_name') || '').trim(), email, supabase_uid: userId, whatsapp_number: String(data.get('whatsapp_number') || '').trim(), business_address: String(data.get('business_address') || '').trim(), business_category: productMainCategory, business_description: String(data.get('business_description') || '').trim(), product_main_category: productMainCategory, product_subcategory: productSubcategory, logo, created_at: new Date().toISOString() };
     let duplicatePendingApplication = false;
     try {
         await updateJson<any[]>('vendor_requests.json', current => {
@@ -739,10 +755,10 @@ export async function registerVendorAction(data: FormData) {
     }
     if (duplicatePendingApplication) {
         if (logo) await deleteStoreAsset(logo);
-        if (signup.session) await supabase.auth.signOut();
+        await supabase.auth.signOut();
         return { success: false, error: 'This email is already registered or pending approval.' };
     }
-    if (signup.session) await supabase.auth.signOut();
+    await supabase.auth.signOut();
     const siteSettings = await readJson<{ admin_whatsapp?: string }>('site_settings.json', { admin_whatsapp: '' });
     const adminWhatsApp = String(siteSettings.admin_whatsapp || '').replace(/\D/g, '');
     const message = ['Fussion vendor application', `Application: ${requestId}`, `Business: ${request.business_name}`, `Owner: ${request.owner_name}`, `Email: ${request.email}`, `WhatsApp: ${request.whatsapp_number}`, `First product category: ${productMainCategory} / ${productSubcategory}`, `Address: ${request.business_address}`, `Description: ${request.business_description}`, '', 'Please review this application in the Fussion Admin Dashboard and approve or reject it.'].join('\n');
