@@ -680,6 +680,46 @@ export async function updateVendorStatusAction(vendorId: string, status: 'approv
     }, []);
     return found ? { success: true } : { success: false, error: 'Vendor not found' };
 }
+export async function deleteVendorAction(vendorId: string) {
+    await requireAdmin();
+    const vendors = await readJson<any[]>('vendors.json', []);
+    const vendor = vendors.find(item => item.vendor_id === vendorId);
+    if (!vendor) return { success: false, error: 'Vendor not found.' };
+
+    const supabase = createSupabaseAdminClient();
+    let authUserId: string | undefined;
+    for (let page = 1; ; page++) {
+        const { data, error } = await supabase.auth.admin.listUsers({ page, perPage: 1000 });
+        if (error) return { success: false, error: 'Could not verify the vendor login account.' };
+        const account = data.users.find(user => user.app_metadata?.role === 'vendor' && user.app_metadata?.vendor_id === vendorId);
+        if (account) { authUserId = account.id; break; }
+        if (data.users.length < 1000) break;
+    }
+    if (authUserId) {
+        const { error } = await supabase.auth.admin.deleteUser(authUserId);
+        if (error) return { success: false, error: 'Could not delete the vendor login account. The vendor was not removed.' };
+    }
+
+    const products = (await readJson<Product[]>('products.json', [])).filter(product => product.vendor_id === vendorId);
+    try {
+        await prisma.$transaction(async tx => {
+            await tx.product.deleteMany({ where: { vendorId } });
+            await tx.vendor.delete({ where: { vendorId } });
+        });
+    } catch (error) {
+        console.error('Could not delete vendor records:', error);
+        return { success: false, error: 'Could not remove the vendor records. Refresh and try again.' };
+    }
+    await Promise.all([
+        ...products.flatMap(product => (product.images || []).filter(image => image.startsWith('/uploads/')).map(deleteStoreAssetIfUnused)),
+        ...(vendor.logo?.startsWith('/uploads/') ? [deleteStoreAssetIfUnused(vendor.logo)] : []),
+    ]);
+    revalidatePath('/');
+    revalidatePath('/admin');
+    revalidatePath('/vendor/dashboard');
+    revalidatePath(`/vendor/${vendorId}`);
+    return { success: true };
+}
 export async function registerVendorAction(data: FormData) {
     const email = String(data.get('email') || '').trim().toLowerCase();
     const password = String(data.get('password') || '');
@@ -693,44 +733,30 @@ export async function registerVendorAction(data: FormData) {
         return { success: false, error: 'Enter a valid email address.' };
     if (!productSubcategory || !isValidProductCategoryPair(productMainCategory, productSubcategory))
         return { success: false, error: 'Select a valid product main category and subcategory.' };
+    if (password.length < 12)
+        return { success: false, error: 'Use a password of at least 12 characters.' };
     if (password !== confirmation)
         return { success: false, error: 'Passwords do not match.' };
     const vendors = await readJson<any[]>('vendors.json', []);
     const requests = await readJson<any[]>('vendor_requests.json', []);
-    if (vendors.some(v => String(v.email || '').trim().toLowerCase() === email && ['approved', 'active'].includes(String(v.status))) || requests.some(r => String(r.email || '').trim().toLowerCase() === email && r.status === 'pending'))
-        return { success: false, error: 'This email is already registered or pending approval.' };
+    if (vendors.some(v => String(v.email || '').trim().toLowerCase() === email) || requests.some(r => String(r.email || '').trim().toLowerCase() === email && r.status === 'pending'))
+        return { success: false, error: 'Account already exists. Sign in or reset your password.' };
+    const breachStatus = await checkPasswordAgainstBreaches(password);
+    if (breachStatus === 'breached')
+        return { success: false, error: 'This password appears in known data breaches. Choose a different password.' };
+    if (breachStatus === 'unavailable')
+        return { success: false, error: 'Could not check the password against breach data. Try again shortly.' };
     const supabase = await createSupabaseServerClient();
-    let userId: string | undefined;
-    let needsEmailConfirmation = false;
-    let newAccountError = password.length < 12 ? 'Use a password of at least 12 characters for a new account.' : '';
-    if (!newAccountError) {
-        const breachStatus = await checkPasswordAgainstBreaches(password);
-        if (breachStatus === 'breached') newAccountError = 'This password appears in known data breaches. Choose a different password for a new account.';
-        else if (breachStatus === 'unavailable') newAccountError = 'Could not check the password against breach data. Try again shortly.';
-        else {
-            const { data: signup, error: signupError } = await supabase.auth.signUp({
-                email,
-                password,
-                options: { emailRedirectTo: getAuthCallbackUrl('/vendor/login') },
-            });
-            if (!signupError && signup.user && signup.user.identities?.length) {
-                userId = signup.user.id;
-                needsEmailConfirmation = !signup.session && !signup.user.email_confirmed_at;
-            }
-        }
-    }
-    // An existing shopper or other account can apply as a vendor after proving
-    // ownership with its current password. Never attach an application by email alone.
-    if (!userId) {
-        const { data: existingAccount, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
-        if (signInError || !existingAccount.user)
-            return { success: false, error: newAccountError || 'This email already has an account. Enter its current password, or reset the password before applying.' };
-        if (existingAccount.user.app_metadata?.role === 'admin') {
-            await supabase.auth.signOut();
-            return { success: false, error: 'This email belongs to an administrator account. Use a different email address.' };
-        }
-        userId = existingAccount.user.id;
-    }
+    const { data: signup, error: signupError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { emailRedirectTo: getAuthCallbackUrl('/vendor/login') },
+    });
+    if (signup.user && !signup.user.identities?.length)
+        return { success: false, error: 'Account already exists. Sign in or reset your password.' };
+    if (signupError || !signup.user)
+        return { success: false, error: 'Could not create your account. Check your details and try again.' };
+    const needsEmailConfirmation = !signup.session && !signup.user.email_confirmed_at;
     const requestId = await nextId('VREQ', 4, 'vendorRequest');
     const logoFile = data.get('business_logo');
     let logo = '';
@@ -741,7 +767,7 @@ export async function registerVendorAction(data: FormData) {
         const fileName = `logo-${Date.now()}${safe}`;
         logo = await uploadStoreAsset(`vendor-requests/${requestId}/${fileName}`, Buffer.from(await logoFile.arrayBuffer()), logoFile.type || 'application/octet-stream');
     }
-    const request = { request_id: requestId, status: 'pending', business_name: String(data.get('business_name') || '').trim(), owner_name: String(data.get('owner_name') || '').trim(), email, supabase_uid: userId, whatsapp_number: String(data.get('whatsapp_number') || '').trim(), business_address: String(data.get('business_address') || '').trim(), business_category: productMainCategory, business_description: String(data.get('business_description') || '').trim(), product_main_category: productMainCategory, product_subcategory: productSubcategory, logo, created_at: new Date().toISOString() };
+    const request = { request_id: requestId, status: 'pending', business_name: String(data.get('business_name') || '').trim(), owner_name: String(data.get('owner_name') || '').trim(), email, supabase_uid: signup.user.id, whatsapp_number: String(data.get('whatsapp_number') || '').trim(), business_address: String(data.get('business_address') || '').trim(), business_category: productMainCategory, business_description: String(data.get('business_description') || '').trim(), product_main_category: productMainCategory, product_subcategory: productSubcategory, logo, created_at: new Date().toISOString() };
     let duplicatePendingApplication = false;
     try {
         await updateJson<any[]>('vendor_requests.json', current => {
@@ -756,7 +782,7 @@ export async function registerVendorAction(data: FormData) {
     if (duplicatePendingApplication) {
         if (logo) await deleteStoreAsset(logo);
         await supabase.auth.signOut();
-        return { success: false, error: 'This email is already registered or pending approval.' };
+        return { success: false, error: 'Account already exists. Sign in or reset your password.' };
     }
     await supabase.auth.signOut();
     const siteSettings = await readJson<{ admin_whatsapp?: string }>('site_settings.json', { admin_whatsapp: '' });
