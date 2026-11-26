@@ -1,8 +1,42 @@
 'use client';
+import imageCompression from 'browser-image-compression';
 
 const MAX_OUTPUT_BYTES = 500 * 1024;
 const MAX_EDGE = 1200;
 const WEBP_QUALITY = 0.8;
+const PRODUCT_IMAGE_MAX_BYTES = 70 * 1024;
+const PRODUCT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+async function compressProductImage(file: File): Promise<File> {
+  if (!PRODUCT_IMAGE_TYPES.has(file.type)) {
+    throw new Error(`${file.name} must be a JPG, PNG, or WebP image.`);
+  }
+
+  const compressed = await imageCompression(file, {
+    maxSizeMB: 0.07,
+    maxWidthOrHeight: 800,
+    fileType: 'image/webp',
+    useWebWorker: true,
+  });
+  if (compressed.size > PRODUCT_IMAGE_MAX_BYTES) {
+    throw new Error(`${file.name} is still over 70 KB after compression. Choose a smaller image.`);
+  }
+
+  const basename = file.name.replace(/\.[^.]+$/, '').slice(0, 90) || 'image';
+  return new File([compressed], `${basename}.webp`, { type: 'image/webp', lastModified: Date.now() });
+}
+
+/** Prepares product photos for the server-authorized Supabase Storage upload. */
+export async function optimizeProductImageInput(input: HTMLInputElement): Promise<File[]> {
+  const selected = Array.from(input.files ?? []);
+  if (!selected.length) return [];
+  if (selected.length > 3) throw new Error('Choose up to 3 product photos.');
+  const optimized = await Promise.all(selected.map(compressProductImage));
+  const transfer = new DataTransfer();
+  optimized.forEach(file => transfer.items.add(file));
+  input.files = transfer.files;
+  return optimized;
+}
 
 function canvasBlob(canvas: HTMLCanvasElement, quality: number) {
   return new Promise<Blob>((resolve, reject) => canvas.toBlob(

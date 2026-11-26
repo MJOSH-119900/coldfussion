@@ -39,6 +39,8 @@ model StoreCounter {
 // Editor can browse and filter the business records directly.
 model Product {
   id                    String   @id
+  createdAt             DateTime @default(now()) @map("created_at")
+  discoveryFingerprint  String   @default("") @map("discovery_fingerprint")
   sortOrder             Int      @default(0) @map("sort_order")
   vendorId              String   @map("vendor_id")
   title                 String
@@ -53,6 +55,7 @@ model Product {
   images                String[] @default([])
   category              String   @default("Other")
   subcategory           String?
+  brand                 String   @default("Unbranded")
   tags                  String[] @default([])
   likesCount            Int      @default(0) @map("likes_count")
   vendorWhatsapp        String   @default("") @map("vendor_whatsapp")
@@ -62,18 +65,24 @@ model Product {
   detailGalleryEnabled  Boolean  @default(false) @map("detail_gallery_enabled")
   isLatest              Boolean  @default(false) @map("is_latest")
   isTopSelling          Boolean  @default(false) @map("is_top_selling")
+  isFeatured            Boolean  @default(false) @map("is_featured")
+  featuredUntil         String?  @map("featured_until")
   relatedProductsMode   String?  @map("related_products_mode")
   relatedProductIds     String[] @default([]) @map("related_product_ids")
 
   @@index([vendorId])
   @@index([category])
   @@index([isAvailable])
+  @@index([category, brand, vendorId, featuredUntil], map: "products_category_brand_vendor_featured_idx")
+  @@index([vendorId, createdAt(sort: Desc)], map: "products_vendor_created_at_idx")
+  @@index([featuredUntil], map: "products_featured_until_idx")
   @@map("products")
 }
 
 model Vendor {
   vendorId          String @id @map("vendor_id")
   sortOrder         Int    @default(0) @map("sort_order")
+  username          String @default("")
   businessName      String @map("business_name")
   ownerName         String @map("owner_name")
   email             String
@@ -85,11 +94,23 @@ model Vendor {
   status            String
   createdAt         String @map("created_at")
   updatedAt         String? @map("updated_at")
+  accessDays        Int?   @map("access_days")
+  accessExpiresAt   String? @map("access_expires_at")
+  paymentAuthorizedAt String? @map("payment_authorized_at")
+  paymentAuthorizedBy String? @map("payment_authorized_by")
+  maxProducts       Int?    @map("max_products")
+  allowedCategories String[] @default([]) @map("allowed_categories")
+  allowedBrands     String[] @default([]) @map("allowed_brands")
+  categoryBrands    Json?    @map("category_brands")
+  subscriptionStatus String? @map("subscription_status")
+  subscriptionExpiresAt String? @map("subscription_expires_at")
   productPolicy     VendorProductPolicy?
   productRequests   VendorProductRequest[]
+  upgradeRequests   VendorUpgradeRequest[]
 
   @@index([email])
   @@index([status])
+  @@index([subscriptionStatus], map: "vendors_subscription_status_idx")
   @@map("vendors")
 }
 
@@ -100,6 +121,7 @@ model VendorRequest {
   businessName        String  @map("business_name")
   ownerName           String  @map("owner_name")
   email               String
+  username            String  @default("")
   supabaseUid         String? @map("supabase_uid")
   whatsappNumber      String  @map("whatsapp_number")
   businessAddress     String  @map("business_address")
@@ -107,12 +129,25 @@ model VendorRequest {
   businessDescription String  @map("business_description")
   productMainCategory String  @default("Other Categories") @map("product_main_category")
   productSubcategory  String  @default("Other") @map("product_subcategory")
+  requestedBrand      String  @default("Unbranded") @map("requested_brand")
   logo                String  @default("")
+  verificationDocType String  @default("") @map("verification_doc_type")
+  verificationDocPath String  @default("") @map("verification_doc_path")
+  paymentReceiptPath  String  @default("") @map("payment_receipt_path")
+  paymentRequired     Boolean @default(false) @map("payment_required")
+  paymentAmount       Int?    @map("payment_amount")
+  paymentInstructions String  @default("") @map("payment_instructions")
+  paymentStatus       String  @default("not_required") @map("payment_status")
+  reviewDueAt         String? @map("review_due_at")
+  accessDays          Int?    @map("access_days")
   vendorId            String? @map("vendor_id")
   createdAt           String  @map("created_at")
   approvedAt          String? @map("approved_at")
   rejectedAt          String? @map("rejected_at")
   rejectionId         String? @map("rejection_id")
+  setupTokenHash      String? @map("setup_token_hash")
+  setupTokenExpiresAt String? @map("setup_token_expires_at")
+  setupTokenUsedAt    String? @map("setup_token_used_at")
 
   @@index([email])
   @@index([status])
@@ -152,6 +187,26 @@ model VendorProductRequest {
   @@index([vendorId, status])
   @@index([status, createdAt])
   @@map("vendor_product_requests")
+}
+
+model VendorUpgradeRequest {
+  id             String   @id
+  vendorId       String   @map("vendor_id")
+  requestType    String   @map("request_type")
+  requestedValue String   @default("") @map("requested_value")
+  amountNaira    Int      @map("amount_naira")
+  referenceCode  String   @unique @map("reference_code")
+  receiptUrl     String?  @map("receipt_url")
+  status         String   @default("pending")
+  createdAt      String   @map("created_at")
+  reviewedAt     String?  @map("reviewed_at")
+  reviewedBy     String?  @map("reviewed_by")
+  adminNote      String?  @map("admin_note")
+  vendor         Vendor  @relation(fields: [vendorId], references: [vendorId], onDelete: Cascade)
+
+  @@index([vendorId, status])
+  @@index([status, createdAt])
+  @@map("vendor_upgrade_requests")
 }
 
 model OrderRecord {

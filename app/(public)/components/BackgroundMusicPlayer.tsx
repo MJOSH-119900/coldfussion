@@ -22,6 +22,7 @@ export default function BackgroundMusicPlayer({ visible = true }: { visible?: bo
     const [playing, setPlaying] = useState(false);
     const [volume, setVolume] = useState(0.35);
     const [open, setOpen] = useState(false);
+    const [minimized, setMinimized] = useState(false);
     const [adminEnabled, setAdminEnabled] = useState(true);
     const [musicPromoOpen, setMusicPromoOpen] = useState(false);
     const musicPromoHandled = useRef(false);
@@ -115,6 +116,7 @@ export default function BackgroundMusicPlayer({ visible = true }: { visible?: bo
 
     function startMusicFromPromo() {
         setMusicPromoOpen(false);
+        setMinimized(false);
         setOpen(true);
         playCurrent();
     }
@@ -140,17 +142,17 @@ export default function BackgroundMusicPlayer({ visible = true }: { visible?: bo
 
     return (
         <>
-        {visible && musicPromoOpen && <aside role="dialog" aria-labelledby="music-promo-title" className="fixed bottom-36 right-4 z-40 w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-violet-200 bg-white p-5 shadow-2xl">
+        {visible && musicPromoOpen && <aside role="dialog" aria-labelledby="music-promo-title" className="fixed bottom-24 left-3 right-3 z-40 rounded-2xl border border-violet-200 bg-white p-5 shadow-2xl sm:bottom-36 sm:left-auto sm:right-4 sm:w-[min(360px,calc(100vw-2rem))]">
             <button type="button" onClick={() => setMusicPromoOpen(false)} aria-label="Close music suggestion" className="absolute right-3 top-3 rounded-full px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">×</button>
             <p className="text-[10px] font-black uppercase tracking-[.2em] text-violet-600">{brand.companyName} sounds</p>
             <h2 id="music-promo-title" className="mt-2 pr-5 text-lg font-black leading-snug text-slate-950">Spice up your shopping experience with our background music</h2>
             <p className="mt-2 text-xs leading-5 text-slate-500">A playlist is ready while you browse. Press play to start listening.</p>
             <div className="mt-4 flex gap-2">
-                <button type="button" onClick={startMusicFromPromo} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-bold text-white hover:bg-violet-700">Start listening</button>
+                <button type="button" onClick={startMusicFromPromo} className="rounded-lg bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-2 text-sm font-bold text-white hover:from-violet-700 hover:to-fuchsia-700">Start listening</button>
                 <button type="button" onClick={() => setMusicPromoOpen(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-50">Not now</button>
             </div>
         </aside>}
-        <div className={visible ? "fixed bottom-4 right-4 z-50 w-[min(360px,calc(100vw-2rem))]" : "hidden"}>
+        <div className={!visible ? "hidden" : minimized ? "fixed bottom-3 right-3 z-50 sm:bottom-4 sm:right-4" : "fixed bottom-3 left-3 right-3 z-50 sm:bottom-4 sm:left-auto sm:right-4 sm:w-[min(360px,calc(100vw-2rem))]"}>
             <audio
                 ref={audioRef}
                 preload="metadata"
@@ -159,7 +161,23 @@ export default function BackgroundMusicPlayer({ visible = true }: { visible?: bo
                 onPlay={() => setPlaying(true)}
             />
 
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-2xl backdrop-blur">
+            {minimized ? (
+                <button
+                    type="button"
+                    onClick={() => setMinimized(false)}
+                    aria-label="Show music player"
+                    title="Show music player"
+                    className="inline-flex h-12 items-center gap-2 rounded-full border border-slate-700 bg-slate-950 px-4 text-sm font-bold text-white shadow-xl transition hover:-translate-y-0.5 hover:bg-violet-700 focus:outline-none focus:ring-4 focus:ring-violet-300"
+                >
+                    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 18V5l12-2v13" />
+                        <circle cx="6" cy="18" r="3" />
+                        <circle cx="18" cy="16" r="3" />
+                    </svg>
+                    <span>Music</span>
+                    {playing && <span aria-label="Playing" className="h-2 w-2 rounded-full bg-emerald-400" />}
+                </button>
+            ) : <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white/95 shadow-2xl backdrop-blur">
                 <div className="flex items-center gap-3 p-3">
                     <button
                         type="button"
@@ -171,7 +189,7 @@ export default function BackgroundMusicPlayer({ visible = true }: { visible?: bo
                     </button>
 
                     <div className="min-w-0 flex-1">
-                        <p className="text-[10px] font-bold uppercase tracking-[.18em] text-violet-600">
+                        <p className="hidden text-[10px] font-bold uppercase tracking-[.18em] text-violet-600 sm:block">
                             {brand.companyName} sounds · Playlist repeat
                         </p>
                         <p className="truncate text-sm font-black text-slate-950">
@@ -183,13 +201,24 @@ export default function BackgroundMusicPlayer({ visible = true }: { visible?: bo
                         type="button"
                         onClick={() => setOpen((value) => !value)}
                         className="rounded-lg px-2 py-1 text-xs font-bold text-slate-500 hover:bg-slate-100"
-                        aria-label="Open music playlist"
+                        aria-label={open ? 'Close music playlist and controls' : 'Open music playlist and controls'}
+                        aria-expanded={open}
                     >
-                        {tracks.length} songs
+                        <span className="sm:hidden">Tracks</span><span className="hidden sm:inline">{tracks.length} songs</span>
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setMinimized(true)}
+                        aria-label="Minimize music player"
+                        title="Minimize music player"
+                        className="inline-flex items-center gap-1 rounded-lg px-2 py-2 text-xs font-bold text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                    >
+                        <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14" /></svg>
+                        <span>Minimize</span>
                     </button>
                 </div>
 
-                <div className="flex items-center gap-2 border-t border-slate-100 px-3 py-2">
+                <div className={`${open ? 'flex' : 'hidden'} items-center gap-2 border-t border-slate-100 px-3 py-2 sm:flex`}>
                     <button
                         type="button"
                         onClick={previousTrack}
@@ -220,7 +249,7 @@ export default function BackgroundMusicPlayer({ visible = true }: { visible?: bo
                 </div>
 
                 {open && (
-                    <div className="max-h-52 overflow-y-auto border-t border-slate-100 p-2">
+                    <div className="max-h-36 overflow-y-auto border-t border-slate-100 p-2 sm:max-h-52">
                         {tracks.map((track, index) => (
                             <button
                                 key={track.id}
@@ -234,7 +263,7 @@ export default function BackgroundMusicPlayer({ visible = true }: { visible?: bo
                         ))}
                     </div>
                 )}
-            </div>
+            </div>}
         </div>
         </>
     );

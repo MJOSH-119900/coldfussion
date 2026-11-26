@@ -49,25 +49,27 @@ export default function VendorProductAccessSection({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-xl font-black">Product upload access</h2>
-            <p className="mt-1 text-sm text-slate-500">Each permission covers one listing only. Another product needs its own admin approval.</p>
-            <p className="mt-3 text-sm font-semibold text-slate-800">Approved starting category: {access.main_category} / {access.subcategory}</p>
+            <p className="mt-1 text-sm text-slate-500">{access.plan_enabled ? 'Your base plan includes five product slots within the unlocked categories and brands.' : 'Each permission covers one listing only. Another product needs its own admin approval.'}</p>
+            <p className="mt-3 text-sm font-semibold text-slate-800">Approved first-product category and subcategory: {access.main_category} / {access.subcategory}</p>
           </div>
           <div className="grid min-w-[13rem] grid-cols-2 gap-2 text-center">
             <div className="rounded-xl bg-slate-50 p-3"><p className="text-xs text-slate-500">Published products</p><p className="mt-1 text-2xl font-black">{access.published_products}</p></div>
-            <div className="rounded-xl bg-violet-50 p-3"><p className="text-xs text-violet-700">Remaining permissions</p><p className="mt-1 text-2xl font-black text-violet-800">{access.remaining_permissions}</p></div>
+            <div className="rounded-xl bg-violet-50 p-3"><p className="text-xs text-violet-700">{access.plan_enabled ? 'Slots remaining' : 'Remaining permissions'}</p><p className="mt-1 text-2xl font-black text-violet-800">{access.remaining_permissions}</p></div>
           </div>
         </div>
-        {access.initial_permission_available
+        {access.plan_enabled
+          ? <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">Allowed categories: {access.allowed_categories?.join(', ')} · Allowed brands: {access.allowed_brands?.join(', ')}.</p>
+          : access.initial_permission_available
           ? <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">Your first product permission is ready. Publish it in the approved category before requesting another product.</p>
           : <p role="status" className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700">Your first product permission has been used. Request approval for each additional product.</p>}
         <div className="mt-4 flex flex-wrap gap-2">
-          <button type="button" onClick={() => onPublishApproved()} disabled={access.remaining_permissions === 0} className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">Publish an approved product</button>
-          <button type="button" onClick={() => setRequestOpen(value => !value)} disabled={access.initial_permission_available} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-bold text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50">Request to Add Another Product</button>
+          <button type="button" onClick={() => onPublishApproved()} disabled={access.remaining_permissions === 0} className="rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50">{access.plan_enabled ? 'Add product' : 'Publish an approved product'}</button>
+          {!access.plan_enabled && <button type="button" onClick={() => setRequestOpen(value => !value)} disabled={access.initial_permission_available} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-2.5 text-sm font-bold text-violet-800 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-50">Request to Add Another Product</button>}
         </div>
         {access.initial_permission_available && <p className="mt-2 text-xs text-slate-500">Publish your first product before requesting additional product access.</p>}
       </section>
 
-      {requestOpen && <form onSubmit={submitRequest} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      {!access.plan_enabled && requestOpen && <form onSubmit={submitRequest} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div><h3 className="text-lg font-black">Request product permission</h3><p className="mt-1 text-sm text-slate-500">Requests may be for your current category or a different category. Approval applies to this proposed product only.</p></div>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="text-sm font-bold text-slate-700">Main category
@@ -112,8 +114,10 @@ export default function VendorProductAccessSection({
             const fulfilled = Boolean(request.fulfilled_at);
             const statusClass = request.status === 'approved'
               ? 'bg-emerald-100 text-emerald-800'
-              : request.status === 'rejected' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800';
-            const statusLabel = request.status === 'approved' && fulfilled ? 'Approved · product published' : request.status;
+              : request.status === 'rejected' || request.status === 'revoked' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800';
+            const statusLabel = request.status === 'revoked'
+              ? 'Permission revoked'
+              : request.status === 'approved' && fulfilled ? 'Approved · product published' : request.status;
             return <article key={request.request_id} className="rounded-xl border border-slate-200 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0"><p className="font-bold">{request.product_name}</p><p className="mt-1 text-xs text-slate-500">{request.main_category} / {request.subcategory} · Request {request.request_id}</p></div>

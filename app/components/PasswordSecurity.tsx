@@ -123,11 +123,59 @@ export function PasswordResetRequestForm({ role }: { role: 'admin' | 'vendor' })
     </PasswordFlowShell>;
 }
 
-export function PasswordResetCompleteForm() {
+export function VendorSetupLinkRecovery() {
+    const [email, setEmail] = useState('');
+    const [message, setMessage] = useState('');
+    const [error, setError] = useState('');
+    const [pending, setPending] = useState(false);
+
+    async function submit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        setPending(true);
+        setError('');
+        setMessage('');
+        try {
+            const result = await requestPasswordResetAction(email, 'vendor');
+            if (!result.success) {
+                setError(result.error || 'Could not send a new setup link.');
+                return;
+            }
+            setMessage('If an application account matches that email, a new seller setup link has been sent.');
+        } catch {
+            setError('Could not send a new setup link. Try again later.');
+        } finally {
+            setPending(false);
+        }
+    }
+
+    return <PasswordFlowShell
+      role="vendor"
+      eyebrow="Seller account setup"
+      headline="Your setup link expired."
+      description="Enter the email address used for your vendor application and we will send a fresh, secure setup link."
+      backHref="/vendor/login"
+      backLabel="Back to sign in"
+    >
+      <form onSubmit={submit}>
+        <p className="text-sm font-bold text-emerald-700">Request a new setup link</p>
+        <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950">Continue account setup</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-500">No administrator action is required.</p>
+        <label className="mt-8 block text-sm font-bold text-slate-700">
+          Application email
+          <input required type="email" autoComplete="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="you@example.com" className="mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-emerald-500 focus:bg-white focus:ring-4 focus:ring-emerald-100"/>
+        </label>
+        {message && <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm leading-6 text-emerald-800">{message}</p>}
+        {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+        <button disabled={pending} className="mt-6 w-full rounded-xl bg-emerald-700 py-3.5 font-bold text-white shadow-lg shadow-emerald-700/20 transition hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-50">{pending ? 'Sending…' : 'Send a new setup link'}</button>
+      </form>
+    </PasswordFlowShell>;
+}
+
+export function PasswordResetCompleteForm({ role = 'admin', email = '', linkError = '', recoveryHref }: { role?: 'admin' | 'vendor'; email?: string; linkError?: string; recoveryHref?: string }) {
     const [password, setPassword] = useState('');
     const [confirmation, setConfirmation] = useState('');
     const [message, setMessage] = useState('');
-    const [error, setError] = useState('');
+    const [error, setError] = useState(linkError);
     const [pending, setPending] = useState(false);
 
     async function submit(event: FormEvent<HTMLFormElement>) {
@@ -145,7 +193,9 @@ export function PasswordResetCompleteForm() {
                 setError(result.error || 'Could not reset the password.');
                 return;
             }
-            setMessage('Your password has been changed. Sign in with your new password.');
+            setMessage(role === 'vendor'
+                ? 'Your password is set. Use the application email shown below to sign in after your vendor application is approved.'
+                : 'Your password has been changed. Sign in with your new password.');
         }
         catch {
             setError('Could not reset your password. Request a new reset link.');
@@ -156,10 +206,10 @@ export function PasswordResetCompleteForm() {
     }
 
     return <PasswordFlowShell
-      role="admin"
-      eyebrow="Secure account recovery"
-      headline="Choose a new password."
-      description="This secure link can only be used once. If it has expired, request a new one."
+      role={role}
+      eyebrow={role === 'vendor' ? 'Seller account setup' : 'Secure account recovery'}
+      headline={role === 'vendor' ? 'Set up your seller account.' : 'Choose a new password.'}
+      description={role === 'vendor' ? 'Choose a secure password for the email address that applied. Admin approval is required before vendor dashboard access is enabled.' : 'This secure link can only be used once. If it has expired, request a new one.'}
     >
       <form onSubmit={submit}>
         <p className="text-sm font-bold text-violet-700">Set a new password</p>
@@ -173,8 +223,9 @@ export function PasswordResetCompleteForm() {
           <label htmlFor="reset-new-password-confirm">Confirm new password</label>
           <PasswordInput id="reset-new-password-confirm" required minLength={12} autoComplete="new-password" value={confirmation} onChange={event => setConfirmation(event.target.value)} placeholder="Enter the password again" wrapperClassName="mt-2" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-slate-950 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100" toggleClassName="text-violet-700 hover:text-violet-900 focus:ring-violet-300" />
         </div>
-        {message && <div role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><p>{message}</p><div className="mt-3 flex flex-wrap gap-4"><Link className="font-bold text-violet-700" href="/admin/login">Admin sign in</Link><Link className="font-bold text-emerald-700" href="/vendor/login">Vendor sign in</Link></div></div>}
-        {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
+        {role === 'vendor' && email && <div className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3"><p className="text-xs font-bold uppercase tracking-wide text-emerald-800">Your vendor sign-in email</p><p className="mt-1 break-all font-semibold text-slate-900">{email}</p><p className="mt-1 text-xs leading-5 text-emerald-900">This is the email on your vendor application. It is already verified by this one-time setup link.</p></div>}
+        {message && <div role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"><p>{message}</p>{role === 'admin' && <div className="mt-3 flex flex-wrap gap-4"><Link className="font-bold text-violet-700" href="/admin/login">Admin sign in</Link><Link className="font-bold text-emerald-700" href="/vendor/login">Vendor sign in</Link></div>}</div>}
+        {error && <p role="alert" className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}{recoveryHref && <> Use the email from your application to <Link href={recoveryHref} className="underline">send a new setup link automatically.</Link></>}</p>}
         <button disabled={pending} className="mt-6 w-full rounded-xl bg-violet-700 py-3.5 font-bold text-white shadow-lg shadow-violet-700/20 transition hover:bg-violet-800 focus:outline-none focus:ring-4 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{pending ? 'Updating…' : 'Update password'}</button>
       </form>
     </PasswordFlowShell>;

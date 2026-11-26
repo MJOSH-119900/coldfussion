@@ -28,7 +28,7 @@ export default function ProductDetails({ product, relatedProducts = [] }: { prod
 
   if (!product) return <main className="py-24 text-center"><p className="font-semibold">Product not found.</p><Link href="/" className="mt-4 inline-block text-violet-700">Back to {brand.companyName}</Link></main>;
 
-  const gallery = product.detail_gallery_enabled ? (product.images || []).slice(0, 4) : (product.images || []).slice(0, 1);
+  const gallery = (product.images || []).slice(0, 3);
   const related = relatedProducts.filter(p => p.id !== product.id).slice(0, 4);
 
   const toggleLike = () => {

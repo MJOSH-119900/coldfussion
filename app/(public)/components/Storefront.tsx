@@ -1,5 +1,5 @@
 'use client';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import ProductCard from './ProductCard';
 import GiveawayPopup from './GiveawayPopup';
@@ -7,6 +7,7 @@ import AboutPortraitPlaceholder from './AboutPortraitPlaceholder';
 import { useBranding } from './BrandingProvider';
 import { BannerSettings, OwnerAbout, Product } from './types/store';
 import { matchesStorefrontCategory, matchesStorefrontSubcategory, normalizeProductMainCategory, PRODUCT_MAIN_CATEGORIES } from '../../../lib/product-categories';
+import { getFairProductsAction } from './public-actions';
 function ProductRail({ title, subtitle, products }: {
     title: string;
     subtitle: string;
@@ -14,16 +15,33 @@ function ProductRail({ title, subtitle, products }: {
 }) {
     if (!products.length)
         return null;
+    const vendorQueues = new Map<string, Product[]>();
+    for (const product of products) {
+        const queue = vendorQueues.get(product.vendor_id) || [];
+        queue.push(product);
+        vendorQueues.set(product.vendor_id, queue);
+    }
+    const balanced: Product[] = [];
+    for (let round = 0; ; round++) {
+        let added = false;
+        for (const queue of vendorQueues.values()) {
+            if (queue[round]) { balanced.push(queue[round]); added = true; }
+        }
+        if (!added) break;
+    }
     return (<section className="mt-14">
       <div className="mb-5 flex items-end justify-between gap-4">
         <div><p className="text-xs font-bold uppercase tracking-[.2em] text-violet-600">{subtitle}</p><h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">{title}</h2></div>
         <Link href="#all-products" className="shrink-0 text-sm font-semibold text-slate-600 hover:text-violet-700">Explore all →</Link>
       </div>
-      <div className="flex gap-4 overflow-x-auto pb-4">{products.map(p => <ProductCard key={p.id} product={p} compact/>)}</div>
+      <div className="flex gap-4 overflow-x-auto pb-4">{balanced.slice(0, 8).map(p => <ProductCard key={p.id} product={p} compact/>)}</div>
     </section>);
 }
-export default function Storefront({ products, topSellingProducts = [], trendingProducts = [], currentYear, bannerSettings, ownerAbout }: {
+export default function Storefront({ products, initialFeedProducts = products, brandOptions = [], fairRpcReady = false, topSellingProducts = [], trendingProducts = [], currentYear, bannerSettings, ownerAbout }: {
     products: Product[];
+    initialFeedProducts?: Product[];
+    brandOptions?: string[];
+    fairRpcReady?: boolean;
     topSellingProducts?: Product[];
     trendingProducts?: Product[];
     currentYear: number;
@@ -32,17 +50,55 @@ export default function Storefront({ products, topSellingProducts = [], trending
 }) {
     const [query, setQuery] = useState('');
     const [category, setCategory] = useState('All');
+    const [brandFilter, setBrandFilter] = useState('All');
     const [subcategory, setSubcategory] = useState('All');
     const [openCategory, setOpenCategory] = useState<string | null>(null);
     const [sort, setSort] = useState('featured');
     const [condition, setCondition] = useState('all');
     const [availableOnly, setAvailableOnly] = useState(false);
     const [maxPrice, setMaxPrice] = useState('');
+    const [filtersOpen, setFiltersOpen] = useState(false);
     const { brand } = useBranding();
     const [activeBanner, setActiveBanner] = useState(0);
+    const [featuredNow, setFeaturedNow] = useState(0);
+    const [feedProducts, setFeedProducts] = useState(initialFeedProducts);
+    const [feedLoading, setFeedLoading] = useState(false);
+    const [feedError, setFeedError] = useState('');
+    const [hasMore, setHasMore] = useState(fairRpcReady && initialFeedProducts.length === 20);
+    const requestSequence = useRef(0);
+    const initializedRpc = useRef(false);
     const banners = bannerSettings.slides;
     const intervalMultiplier = bannerSettings.intervalUnit === 'days' ? 86400000 : bannerSettings.intervalUnit === 'hours' ? 3600000 : 1000;
     const rotationMs = bannerSettings.intervalValue * intervalMultiplier;
+    useEffect(() => {
+        setFeaturedNow(Date.now());
+        const timer = window.setInterval(() => setFeaturedNow(Date.now()), 60_000);
+        return () => window.clearInterval(timer);
+    }, []);
+    useEffect(() => {
+        if (!fairRpcReady) return;
+        if (!initializedRpc.current) { initializedRpc.current = true; return; }
+        const requestId = ++requestSequence.current;
+        const timer = window.setTimeout(() => {
+            setFeedLoading(true);
+            setFeedError('');
+            void getFairProductsAction({
+                filter_category: category === 'All' ? null : category,
+                filter_brand: brandFilter === 'All' ? null : brandFilter,
+                search_query: query,
+                page_limit: 20,
+                page_offset: 0,
+            }).then(result => {
+                if (requestId !== requestSequence.current) return;
+                if (!result.success) { setFeedError(result.error); setHasMore(false); return; }
+                setFeedProducts(result.products);
+                setHasMore(result.has_more);
+            }).catch(error => {
+                if (requestId === requestSequence.current) setFeedError(error instanceof Error ? error.message : 'Could not load products.');
+            }).finally(() => { if (requestId === requestSequence.current) setFeedLoading(false); });
+        }, 250);
+        return () => window.clearTimeout(timer);
+    }, [category, brandFilter, query, fairRpcReady]);
     useEffect(() => {
         if (banners.length < 2) return;
         let timeout: ReturnType<typeof setTimeout>;
@@ -89,16 +145,22 @@ export default function Storefront({ products, topSellingProducts = [], trending
     const filtered = useMemo(() => {
         const term = query.trim().toLowerCase();
         const max = maxPrice.trim() ? Number(maxPrice) : Infinity;
-        const result = products.filter(p => {
+        const result = feedProducts.filter(p => {
             const matchesCategory = matchesStorefrontCategory(p.category, category);
+            const matchesBrand = brandFilter === 'All' || (p.brand || 'Unbranded') === brandFilter;
             const matchesSubcategory = matchesStorefrontSubcategory(p.subcategory, subcategory);
-            const matchesSearch = !term || [p.title, p.description, p.category, p.subcategory || '', p.vendor_business_name || '', p.location || '', p.condition || 'new', ...(p.tags || [])].join(' ').toLowerCase().includes(term);
+            const matchesSearch = !term || [p.title, p.description, p.category, p.subcategory || '', p.brand || '', p.vendor_business_name || '', p.location || '', p.condition || 'new', ...(p.tags || [])].join(' ').toLowerCase().includes(term);
             const matchesCondition = condition === 'all' || (p.condition || 'new') === condition;
-            const matchesAvailability = !availableOnly || (p.is_available !== false && (p.available_quantity ?? 0) > 0);
+            const matchesAvailability = !availableOnly || (p.available_quantity ?? 0) > 0;
             const matchesPrice = Number.isFinite(max) ? p.price <= max : true;
-            return matchesCategory && matchesSubcategory && matchesSearch && matchesCondition && matchesAvailability && matchesPrice;
+            return matchesCategory && matchesBrand && matchesSubcategory && matchesSearch && matchesCondition && matchesAvailability && matchesPrice;
         });
         return result.sort((a, b) => {
+            if (a.vendor_item_rank !== undefined && b.vendor_item_rank !== undefined && a.vendor_item_rank !== b.vendor_item_rank)
+                return a.vendor_item_rank - b.vendor_item_rank;
+            const aFeatured = Boolean(featuredNow && a.is_featured && a.featured_until && Date.parse(a.featured_until) > featuredNow);
+            const bFeatured = Boolean(featuredNow && b.is_featured && b.featured_until && Date.parse(b.featured_until) > featuredNow);
+            if (aFeatured !== bFeatured) return aFeatured ? -1 : 1;
             if (sort === 'price-low')
                 return a.price - b.price;
             if (sort === 'price-high')
@@ -107,10 +169,19 @@ export default function Storefront({ products, topSellingProducts = [], trending
                 return a.title.localeCompare(b.title);
             return 0;
         });
-    }, [products, query, category, subcategory, sort, condition, availableOnly, maxPrice]);
-    const latest = products.filter(p => p.is_latest).slice().reverse();
+    }, [feedProducts, query, category, brandFilter, subcategory, sort, condition, availableOnly, maxPrice, featuredNow]);
+    const latest = products.slice(-8).reverse();
     const topSelling = topSellingProducts.length ? topSellingProducts : products.filter(p => p.is_top_selling);
     const groups = Array.from(new Set(products.map(p => normalizeProductMainCategory(p.category)))).filter(Boolean);
+    const activeFilterCount = [
+        category !== 'All',
+        brandFilter !== 'All',
+        subcategory !== 'All',
+        condition !== 'all',
+        sort !== 'featured',
+        availableOnly,
+        Boolean(maxPrice.trim()),
+    ].filter(Boolean).length;
     const moveToResults = () => {
         requestAnimationFrame(() => {
             document.getElementById('all-products')?.scrollIntoView({
@@ -121,13 +192,41 @@ export default function Storefront({ products, topSellingProducts = [], trending
     };
     const handleSearch = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        setFiltersOpen(false);
         moveToResults();
     };
     const handleCategoryChange = (value: string) => {
         setCategory(value);
         setSubcategory('All');
         setOpenCategory(null);
+        setFiltersOpen(false);
         moveToResults();
+    };
+    const loadMoreProducts = async () => {
+        if (!fairRpcReady || feedLoading || !hasMore) return;
+        const requestId = ++requestSequence.current;
+        setFeedLoading(true);
+        setFeedError('');
+        try {
+            const result = await getFairProductsAction({
+                filter_category: category === 'All' ? null : category,
+                filter_brand: brandFilter === 'All' ? null : brandFilter,
+                search_query: query,
+                page_limit: 20,
+                page_offset: feedProducts.length,
+            });
+            if (requestId !== requestSequence.current) return;
+            if (!result.success) { setFeedError(result.error); setHasMore(false); return; }
+            setFeedProducts(current => {
+                const existing = new Set(current.map(product => product.id));
+                return [...current, ...result.products.filter(product => !existing.has(product.id))];
+            });
+            setHasMore(result.has_more);
+        } catch (error) {
+            if (requestId === requestSequence.current) setFeedError(error instanceof Error ? error.message : 'Could not load more products.');
+        } finally {
+            if (requestId === requestSequence.current) setFeedLoading(false);
+        }
     };
     const handleCategoryTabClick = (value: string) => {
         setCategory(value);
@@ -142,16 +241,23 @@ export default function Storefront({ products, topSellingProducts = [], trending
         moveToResults();
     };
     return (<main className="mx-auto max-w-7xl px-4 pb-20 pt-5 sm:px-6">
-      <form onSubmit={handleSearch} className="sticky top-[58px] z-20 -mx-4 border-b border-slate-200 bg-white/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
+      <form onSubmit={handleSearch} className="sticky top-16 z-20 -mx-4 border-b border-slate-200 bg-white/95 px-3 py-2 backdrop-blur sm:-mx-6 sm:px-6 sm:py-3">
         <div className="mx-auto flex max-w-7xl flex-col gap-2 sm:flex-row sm:items-center">
-          <label className="relative min-w-0 flex-1"><span className="sr-only">Search the store</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search products, brands, sellers…" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-violet-500 focus:bg-white"/></label>
-          <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap sm:justify-end">
+          <div className="flex min-w-0 flex-1 gap-2">
+            <label className="relative min-w-0 flex-1"><span className="sr-only">Search the store</span><input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search products, brands, sellers…" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm outline-none focus:border-violet-500 focus:bg-white"/></label>
+            <button type="button" aria-expanded={filtersOpen} aria-controls="storefront-filter-controls" onClick={() => setFiltersOpen(open => !open)} className="inline-flex h-11 shrink-0 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 shadow-sm hover:border-violet-300 hover:text-violet-700 sm:hidden">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4"><path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M7 12h10m-7 6h4"/></svg>
+              Filters{activeFilterCount > 0 ? <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-violet-100 px-1 text-[10px] text-violet-800">{activeFilterCount}</span> : null}
+            </button>
+          </div>
+          <div id="storefront-filter-controls" className={`${filtersOpen ? 'grid' : 'hidden'} grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap sm:justify-end`}>
             <select aria-label="Filter category" value={category} onChange={e => handleCategoryChange(e.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold sm:w-40"><option value="All">All categories</option>{categoryOptions.filter(c => c !== 'All').map(c => <option key={c} value={c}>{c}</option>)}</select>
+            <select aria-label="Filter brand" value={brandFilter} onChange={event => setBrandFilter(event.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold sm:w-40"><option value="All">All brands</option>{brandOptions.map(value => <option key={value} value={value}>{value}</option>)}</select>
             <select aria-label="Filter condition" value={condition} onChange={e => setCondition(e.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold sm:w-36"><option value="all">Any condition</option><option value="new">New</option><option value="used">Used</option><option value="spare-part">Spare parts</option></select>
             <select aria-label="Sort products" value={sort} onChange={e => setSort(e.target.value)} className="h-10 w-full min-w-0 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold sm:w-44"><option value="featured">Featured</option><option value="price-low">Price: low to high</option><option value="price-high">Price: high to low</option><option value="name">Name A–Z</option></select>
             <label className="flex h-10 min-w-0 items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-600 sm:px-3"><input type="checkbox" checked={availableOnly} onChange={e => setAvailableOnly(e.target.checked)} className="h-4 w-4 shrink-0 rounded border-slate-300"/> In stock only</label>
             <label className="flex h-10 min-w-0 items-center justify-between gap-1 rounded-xl border border-slate-200 bg-white px-2 text-sm font-semibold text-slate-600 sm:gap-2 sm:px-3"><span className="shrink-0">Max price</span><input value={maxPrice} onChange={e => setMaxPrice(e.target.value.replace(/[^0-9.]/g, ''))} inputMode="decimal" placeholder="Any" className="h-8 w-14 min-w-0 rounded-lg border border-slate-200 bg-slate-50 px-2 sm:w-24 sm:px-3"/></label>
-            <button type="button" onClick={() => { setQuery(''); setCategory('All'); setSubcategory('All'); setOpenCategory(null); setSort('featured'); setCondition('all'); setAvailableOnly(false); setMaxPrice(''); }} className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 px-4 text-sm font-bold text-slate-600 hover:border-slate-400">Clear filters</button>
+            <button type="button" onClick={() => { setQuery(''); setCategory('All'); setBrandFilter('All'); setSubcategory('All'); setOpenCategory(null); setSort('featured'); setCondition('all'); setAvailableOnly(false); setMaxPrice(''); setFiltersOpen(false); }} className="inline-flex h-10 items-center justify-center rounded-lg border border-slate-200 px-4 text-sm font-bold text-slate-600 hover:border-slate-400">Clear filters</button>
           </div>
         </div>
       </form>
@@ -165,7 +271,7 @@ export default function Storefront({ products, topSellingProducts = [], trending
         onKeyDown={event => {
             if (event.key === 'Escape') setOpenCategory(null);
         }}
-        className="relative -mx-4 border-b border-slate-100 bg-gradient-to-r from-violet-50 via-white to-slate-50 px-4 py-4 max-sm:sticky max-sm:top-[270px] max-sm:z-10 sm:-mx-6 sm:px-6 xl:sticky xl:top-[126px] xl:z-10"
+        className="relative -mx-4 border-b border-slate-100 bg-gradient-to-r from-violet-50 via-white to-cyan-50 px-4 py-4 sm:-mx-6 sm:px-6 xl:sticky xl:top-[126px] xl:z-10"
       >
         <div className="relative mx-auto max-w-7xl">
           <div className="mb-3 flex items-center justify-between gap-3">
@@ -234,10 +340,10 @@ export default function Storefront({ products, topSellingProducts = [], trending
           <div className="absolute inset-0 bg-gradient-to-r from-slate-950/90 via-slate-950/65 to-slate-950/20" />
           <div className="relative flex min-h-[350px] items-center px-6 py-12 sm:min-h-[440px] sm:px-12 sm:py-16">
             <div className="max-w-2xl">
-              <p className="text-xs font-bold uppercase tracking-[.25em] text-violet-300">Featured on {brand.companyName}</p>
+              <p className="text-xs font-bold uppercase tracking-[.25em] text-amber-300">Featured on {brand.companyName}</p>
               <h1 className="mt-4 text-4xl font-black leading-tight tracking-tight sm:text-6xl">{banners[activeBanner]?.title}</h1>
               {banners[activeBanner]?.description && <p className="mt-4 max-w-lg text-sm leading-6 text-slate-200 sm:text-base">{banners[activeBanner].description}</p>}
-              {banners[activeBanner]?.button_label && <a href={banners[activeBanner].button_url || '#all-products'} className="mt-7 inline-flex rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-950 hover:bg-violet-100">{banners[activeBanner].button_label} <span className="ml-2">→</span></a>}
+              {banners[activeBanner]?.button_label && <a href={banners[activeBanner].button_url || '#all-products'} className="mt-7 inline-flex rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-950 hover:bg-cyan-100">{banners[activeBanner].button_label} <span className="ml-2">→</span></a>}
             </div>
           </div>
           {banners.length > 1 && <div className="absolute bottom-5 right-6 flex items-center gap-2 sm:right-12" aria-label="Choose banner">
@@ -249,7 +355,7 @@ export default function Storefront({ products, topSellingProducts = [], trending
           <div className="absolute -right-16 -top-28 h-80 w-80 rounded-full bg-violet-600/30 blur-3xl"/>
           <div className="relative max-w-2xl">
             <p className="text-xs font-bold uppercase tracking-[.25em] text-violet-300">The {brand.companyName} edit</p>
-            <h1 className="mt-4 text-4xl font-black leading-tight tracking-tight sm:text-6xl">Good finds.<br /><span className="text-violet-300">All in one place.</span></h1>
+            <h1 className="mt-4 text-4xl font-black leading-tight tracking-tight sm:text-6xl">Good finds.<br /><span className="bg-gradient-to-r from-rose-300 to-cyan-200 bg-clip-text text-transparent">All in one place.</span></h1>
             <p className="mt-4 max-w-lg text-sm leading-6 text-slate-300 sm:text-base">Discover standout tech, fashion and everyday essentials from trusted sellers.</p>
             <a href="#all-products" className="mt-7 inline-flex rounded-xl bg-white px-5 py-3 text-sm font-bold text-slate-950 hover:bg-violet-100">Explore products <span className="ml-2">→</span></a>
           </div>
@@ -261,14 +367,16 @@ export default function Storefront({ products, topSellingProducts = [], trending
       <ProductRail title="Trending now" subtitle="Recent shopper interest" products={trendingProducts}/>
 
 
-      {groups.map(group => <ProductRail key={group} title={group} subtitle="Curated for you" products={products.filter(p => normalizeProductMainCategory(p.category) === group).slice(0, 8)}/>)}
+      {groups.map(group => <ProductRail key={group} title={group} subtitle="Curated for you" products={products.filter(p => normalizeProductMainCategory(p.category) === group)}/>)}
 
-      <section id="all-products" className="mt-16 scroll-mt-[410px] sm:scroll-mt-64">
+      <section id="all-products" className="mt-16 scroll-mt-36">
         <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
           <div><p className="text-xs font-bold uppercase tracking-[.2em] text-violet-600">The collection</p><h2 className="mt-1 text-3xl font-black text-slate-950">Explore products</h2></div>
-          <span className="text-sm text-slate-500">{filtered.length} items</span>
+          <span className="text-sm text-slate-500">{filtered.length} items{feedLoading ? ' · Loading…' : ''}</span>
         </div>
-        {filtered.length ? <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{filtered.map(p => <ProductCard key={p.id} product={p}/>)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 py-16 text-center text-slate-500">No products match your search. Try another keyword or category.</div>}
+        {feedError && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">{feedError}</p>}
+        {filtered.length ? <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">{filtered.map(p => <ProductCard key={p.id} product={p}/>)}</div> : <div className="rounded-2xl border border-dashed border-slate-300 py-16 text-center text-slate-500">{feedLoading ? 'Loading products…' : 'No products match your search. Try another keyword or category.'}</div>}
+        {fairRpcReady && hasMore && <div className="mt-7 text-center"><button type="button" onClick={() => void loadMoreProducts()} disabled={feedLoading} className="rounded-xl border border-slate-300 bg-white px-6 py-3 text-sm font-bold text-slate-800 shadow-sm hover:border-violet-400 hover:text-violet-800 disabled:cursor-wait disabled:opacity-60">{feedLoading ? 'Loading products…' : 'Load more products'}</button></div>}
       </section>
       <section className="mt-16 grid overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm md:grid-cols-[minmax(240px,.8fr)_1.2fr]">
         <div className="min-h-64 bg-slate-100 md:min-h-80">

@@ -38,10 +38,13 @@ Configure these values in `.env.local` and in production server settings:
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`)
 - `SUPABASE_SECRET_KEY` — server-only; needed for uploads to Supabase Storage, role assignment, vendor invitations, and bulk legacy migration.
 - `NEXT_PUBLIC_SITE_URL` — canonical HTTPS URL used in Auth callbacks; development defaults to `http://localhost:3000`
+- `CRON_SECRET` — a random server-only value of at least 32 characters used to protect the database activity ping endpoint.
 
-Configure Supabase Auth email delivery, require email confirmation, and allow the exact `/auth/callback` redirect URL in Supabase Auth URL settings. Set the site's canonical URL to `NEXT_PUBLIC_SITE_URL` in production. See [Fixing production Auth email links](#fixing-production-auth-email-links) if a message points to localhost.
+Configure Supabase Auth email delivery, require email confirmation, and allow `https://coldfussion.vercel.app/auth/callback` in Supabase Auth URL settings. The Invite user email template must link to `{{ .ConfirmationURL }}` so Supabase preserves the requested `/vendor/setup` destination. Set the site's canonical URL to `NEXT_PUBLIC_SITE_URL` in production. See [Fixing production Auth email links](#fixing-production-auth-email-links) if a message points to localhost or the storefront.
 
-Supabase Auth is the sole identity and password provider. Admin/vendor roles are stored in server-managed Supabase `app_metadata`; vendor profiles and applications remain in Supabase Postgres. Existing pending applications can be approved by inviting the applicant through Supabase Auth. New vendor applications work with or without email confirmation enabled; when enabled, the vendor confirms the address before signing in.
+Supabase Auth is the sole identity and password provider. Login email/password credentials live in Supabase Auth's `auth.users`; admin/vendor roles are stored in server-managed `app_metadata`. Vendor applications and profiles are stored in the existing Postgres `vendor_requests` and `vendors` tables. A new vendor application is saved first, then Supabase Auth emails a secure password setup link. The vendor can set a password immediately but cannot sign in to the vendor dashboard until an administrator approves the application and assigns the vendor role and ID. If the setup email cannot be sent, the application remains saved and approval retries the invitation without requiring a new application.
+
+Vendor onboarding requires a unique username, email, business details, and one CAC or NIN document. Identity documents and payment receipts are capped at 1 MB, stored in the private `vendor-verification-private` Storage bucket, and shown to admins through five-minute signed URLs. Admin → Vendors can set whether payment is required, the amount and instructions, a default access period, then verify a receipt and assign access days during approval. New vendor access expires after the assigned period; existing vendors without an expiry remain unchanged. The application review target is 24 hours for weekday submissions.
 
 The legacy `users_auth` registry is no longer read or written by the app, and is excluded from new backups and JSON imports. The one-time migration script remains under `scripts/` for reference; do not rerun it after accounts have been migrated because it sends setup emails.
 
@@ -91,6 +94,8 @@ If a password reset email opens `http://localhost:3000`, Supabase is falling bac
 4. In **Authentication → Email Templates → Reset Password**, make the button use Supabase's `{{ .ConfirmationURL }}` (or its redirect target) rather than a hard-coded localhost URL or `{{ .SiteURL }}`. The app's callback exchanges the Supabase code, then sends the user to `/password-reset/complete`.
 5. Save the settings, request a **new** reset email at `https://coldfussion.vercel.app/admin/password-reset`, and confirm the link begins at `https://coldfussion.vercel.app/auth/callback`. Old reset messages keep their old link and should not be reused.
 
+For vendor invitations, also open **Authentication → Email Templates → Invite user** and make its invitation button use `{{ .ConfirmationURL }}`. The app sends invitations to `https://coldfussion.vercel.app/auth/callback?next=%2Fvendor%2Fsetup`; if that callback is absent from **Redirect URLs**, Supabase falls back to the Site URL and the link can open the storefront. Confirm custom SMTP is enabled for delivery to vendor addresses, not only project team addresses.
+
 Do not put encryption keys, service-role keys, session secrets or passwords in JSON or client-side code.
 
 New passwords are checked against the Have I Been Pwned password corpus through its k-anonymity range API. Only the first five characters of a SHA-1 digest are sent; the password and full digest remain on the server. Password creation/change/reset fails explicitly if the check service is unavailable.
@@ -119,12 +124,17 @@ Import the Git repository into Vercel as a Next.js project and use the default i
 - `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — public Supabase client configuration.
 - `SUPABASE_SECRET_KEY` — server-only secret used by guarded server actions for Storage and Auth administration.
 - `NEXT_PUBLIC_SITE_URL` — the canonical production HTTPS URL used in Auth redirects.
+- `CRON_SECRET` — random server-only value of at least 32 characters. Set this before enabling an external scheduled ping.
 
 Apply pending Prisma migrations with `npm run db:deploy` before sending production traffic. Add `https://<production-domain>/auth/callback` to Supabase Auth's allowed redirect URLs. Local JSON files are not required at build or runtime.
 
+### Keep a Free Supabase project active
+
+The protected `GET /api/cron/db-ping` endpoint runs `SELECT 1` against Postgres. Set a random `CRON_SECRET` in Vercel's Production environment, then redeploy. In cron-job.org, create a GET request to `https://coldfussion.vercel.app/api/cron/db-ping`, schedule it once per day, and set the request header `Authorization: Bearer <the same CRON_SECRET>`. A successful request returns `{"ok":true}`. Keep the secret private. Supabase may still pause Free projects if activity is considered too low; this ping is a best-effort workaround, not a guarantee.
+
 ## Important deployment note
 
-Supabase Postgres provides durable storage for application records and settings. Uploaded product, vendor, branding, banner, about, and music files use the public `store-assets` Supabase Storage bucket. The admin and vendor application handlers upload through server-only Supabase credentials; no client-side Storage write policies are enabled.
+Supabase Postgres provides durable storage for application records and settings. Product photos use the public `product-images` Supabase Storage bucket; vendor, branding, banner, about, and music files use `store-assets`. Product photos are converted to WebP in the browser, limited to 70 KB per image, and uploaded with unique names. The product bucket enforces WebP and a 75 KB maximum. Product uploads and removals run through authenticated server actions; the optional Storage RLS policies for authenticated owner/admin operations are in `supabase/migrations/20261126120000_product_image_storage_policies.sql`.
 
 ## Vendor applications from the storefront
 
@@ -138,8 +148,8 @@ The app no longer needs the legacy auth encryption/session secrets or a local JS
 
 ## Vendor approval and sales workflow (v12 update)
 
-- A storefront application is saved with a unique `VREQ0001`-style application ID. The application ID and business details are included in the WhatsApp handoff to `FUSSION_ADMIN_WHATSAPP`; no password is requested or sent.
-- In Admin → Vendors, enter the application ID from WhatsApp, then choose Approve or Reject. Approval creates the vendor account and a separate `VEN0001`-style vendor ID, then sends a Supabase Auth invitation so the vendor can set a password.
+- A storefront application is saved with a unique `VREQ0001`-style application ID, a private CAC/NIN document, and a private payment receipt when payment is enabled. The applicant can open a WhatsApp handoff with the application details. Supabase Auth emails a secure password setup link to `/vendor/setup`; no password is collected on the application form.
+- In Admin → Vendors, review the documents, authorize the payment receipt when required, assign access days, and approve or reject. Approval assigns a separate `VEN0001`-style vendor ID and enables the same Supabase Auth user. The vendor signs in with the application email and the password set from the invitation link.
 - Vendors acknowledge each vendor-specific order, move it to Processing, and finally confirm the completed sale. Rejected/cancelled orders do not count as revenue.
 - Every vendor order has its own `ORD000001`-style ID and shares the customer's checkout reference across a multi-vendor cart.
 - Inventory is deducted only when a vendor confirms completion; the order is atomically claimed during completion to prevent double deduction from repeated clicks.
@@ -147,14 +157,22 @@ The app no longer needs the legacy auth encryption/session secrets or a local JS
 
 Vendor and admin passwords are managed by Supabase Auth and are never stored in the app database.
 
+## Vendor base plan and manual add-ons
+
+Newly approved vendors receive five product slots, their approved category, and the brand selected in their application. Existing vendors retain their current per-product approval rules. Vendor → **Product access** shows the current plan and provides bank-transfer requests for monthly renewal (₦1,000), one brand in an unlocked category (₦500), one extra category (₦1,000), five product slots (₦300), or a seven-day featured boost for one product (₦500). The vendor includes the generated `VND-XXXXXX` reference in the transfer narration; an admin verifies the transfer and reviews it under **Vendor Add-ons**. Renewal approval adds 30 days and restores dashboard access for expired vendors.
+
+The add-on requests reuse the bank transfer instructions configured in Admin → **Vendors**. Product boosts are time-limited and display at the top of storefront search with a Featured badge. Product photos are limited to three per product, converted to WebP at up to 800 px and 70 KB, and removed from Storage after the product record is deleted or an image is replaced.
+
+Apply the ordered Prisma migrations with `npm run db:deploy` before deployment. The corresponding SQL Editor scripts are `supabase/migrations/20261126130000_vendor_monetization.sql`, `supabase/migrations/20261126140000_fair_product_discovery.sql`, and `supabase/migrations/20261126150000_vendor_whatsapp_setup.sql`, in that order. They add vendor entitlements and requests, the fair product RPC and indexes, product discovery history, entitlement triggers, direct-client RLS policies, and short-lived one-time vendor setup token fields. The storefront uses paged RPC results for its main feed, with category and brand filtering, search, and Load more. A persisted first-published fingerprint keeps deleting and re-uploading the same listing from making it fresh again. The server actions also enforce ownership and plan limits; the app's privileged Prisma connection does not rely on RLS for its checks.
+
 
 ## Storefront music and media uploads (v14 repair)
 
 - Admin → Music has a global storefront Play/Pause switch. Open storefront pages check the setting every 5 seconds; pausing stops their current audio. A shopper must still initiate playback once because browsers block unsolicited autoplay with sound.
 - Audio upload accepts MP3 (.mp3), M4A (.m4a), OGG (.ogg), WAV (.wav) and WebM audio (.webm). Each file and the full admin music library are capped at 10 MB total.
-- Product photos accept JPG/JPEG, PNG, WEBP, GIF and AVIF, up to 4 images per product upload. The browser converts them to WebP at 80% quality and scales the longest edge to at most 1200 px. File size is content-dependent and commonly lands around 40–150 KB; the browser and server enforce a 500 KB ceiling without repeatedly degrading complex photos. Use actual image files, not URLs, PDFs, SVGs or HEIC/HEIF photos. Convert iPhone HEIC images to JPG or PNG first.
+- Product photos accept JPG, PNG, or WebP, up to 3 images per product. The browser converts them to WebP, scales the longest edge to at most 800 px, and enforces a strict 70 KB limit; the server also checks WebP data and size. Use actual image files, not URLs, PDFs, SVGs, GIFs, AVIF, or HEIC/HEIF photos. Convert unsupported formats to JPG or PNG first.
 - Next.js Server Action request limit is set to 100 MB to support multiple photos or larger music files in one submission.
-- New uploads are stored in the Supabase Storage `store-assets` bucket. Existing media was copied into that bucket; the local directory can remain as a legacy fallback.
+- Product photos are stored in the Supabase Storage `product-images` bucket. Other new media uses `store-assets`; legacy uploads can remain in the local directory as a fallback.
 
 ## Owner About page
 

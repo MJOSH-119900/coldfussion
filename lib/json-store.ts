@@ -64,16 +64,20 @@ async function readFromStore<T>(tx: StoreTransaction, name: JsonFileName, fallba
             const rows = await tx.product.findMany({ orderBy: { sortOrder: 'asc' } });
             values = rows.map(row => ({
                 id: row.id, vendor_id: row.vendorId, title: row.title, description: row.description,
+                created_at: row.createdAt.toISOString(),
                 price: row.price, compare_at_price: row.compareAtPrice ?? undefined,
                 size_prices: row.sizePrices ?? undefined, giveaway: row.giveaway,
                 giveaway_announcement: row.giveawayAnnouncement ?? undefined,
                 available_quantity: row.availableQuantity, is_available: row.isAvailable,
                 images: row.images, category: row.category, subcategory: row.subcategory ?? undefined,
+                brand: row.brand,
                 tags: row.tags, likes_count: row.likesCount,
                 vendor_whatsapp: row.vendorWhatsapp, vendor_business_name: row.vendorBusinessName ?? undefined,
                 location: row.location ?? undefined, condition: row.condition ?? undefined,
                 detail_gallery_enabled: row.detailGalleryEnabled, is_latest: row.isLatest,
                 is_top_selling: row.isTopSelling,
+                is_featured: row.isFeatured,
+                featured_until: row.featuredUntil ?? undefined,
                 related_products_mode: row.relatedProductsMode ?? undefined,
                 related_product_ids: row.relatedProductIds,
             }));
@@ -82,11 +86,20 @@ async function readFromStore<T>(tx: StoreTransaction, name: JsonFileName, fallba
         case 'vendors.json': {
             const rows = await tx.vendor.findMany({ orderBy: { sortOrder: 'asc' } });
             values = rows.map(row => ({
-                vendor_id: row.vendorId, business_name: row.businessName, owner_name: row.ownerName,
+                vendor_id: row.vendorId, username: row.username, business_name: row.businessName, owner_name: row.ownerName,
                 email: row.email, whatsapp_number: row.whatsappNumber,
                 business_address: row.businessAddress, business_category: row.businessCategory,
                 business_description: row.businessDescription, logo: row.logo, status: row.status,
                 created_at: row.createdAt, updated_at: row.updatedAt ?? undefined,
+                access_days: row.accessDays ?? undefined, access_expires_at: row.accessExpiresAt ?? undefined,
+                payment_authorized_at: row.paymentAuthorizedAt ?? undefined,
+                payment_authorized_by: row.paymentAuthorizedBy ?? undefined,
+                max_products: row.maxProducts ?? undefined,
+                allowed_categories: row.allowedCategories,
+                allowed_brands: row.allowedBrands,
+                category_brands: row.categoryBrands ?? undefined,
+                subscription_status: row.subscriptionStatus ?? undefined,
+                subscription_expires_at: row.subscriptionExpiresAt ?? undefined,
             }));
             break;
         }
@@ -94,13 +107,22 @@ async function readFromStore<T>(tx: StoreTransaction, name: JsonFileName, fallba
             const rows = await tx.vendorRequest.findMany({ orderBy: { sortOrder: 'asc' } });
             values = rows.map(row => ({
                 request_id: row.requestId, status: row.status, business_name: row.businessName,
-                owner_name: row.ownerName, email: row.email, supabase_uid: row.supabaseUid ?? undefined,
+                owner_name: row.ownerName, email: row.email, username: row.username, supabase_uid: row.supabaseUid ?? undefined,
                 whatsapp_number: row.whatsappNumber, business_address: row.businessAddress,
                 business_category: row.businessCategory, business_description: row.businessDescription,
                 product_main_category: row.productMainCategory, product_subcategory: row.productSubcategory,
+                requested_brand: row.requestedBrand,
+                verification_doc_type: row.verificationDocType, verification_doc_path: row.verificationDocPath,
+                payment_receipt_path: row.paymentReceiptPath, payment_required: row.paymentRequired,
+                payment_amount: row.paymentAmount ?? undefined, payment_instructions: row.paymentInstructions,
+                payment_status: row.paymentStatus, review_due_at: row.reviewDueAt ?? undefined,
+                access_days: row.accessDays ?? undefined,
                 logo: row.logo, vendor_id: row.vendorId ?? undefined, created_at: row.createdAt,
                 approved_at: row.approvedAt ?? undefined, rejected_at: row.rejectedAt ?? undefined,
                 rejection_id: row.rejectionId ?? undefined,
+                setup_token_hash: row.setupTokenHash ?? undefined,
+                setup_token_expires_at: row.setupTokenExpiresAt ?? undefined,
+                setup_token_used_at: row.setupTokenUsedAt ?? undefined,
             }));
             break;
         }
@@ -210,6 +232,8 @@ async function writeToStore(tx: StoreTransaction, name: JsonFileName, value: unk
             for (const { data, index } of items) {
                 const productData = {
                 id: String(data.id), sortOrder: index, vendorId: String(data.vendor_id || ''),
+                createdAt: data.created_at ? new Date(String(data.created_at)) : new Date(),
+                discoveryFingerprint: '',
                 title: String(data.title || ''), description: String(data.description || ''),
                 price: Number(data.price || 0), compareAtPrice: data.compare_at_price == null ? null : Number(data.compare_at_price),
                 sizePrices: data.size_prices == null ? Prisma.JsonNull : asJson(data.size_prices),
@@ -217,11 +241,13 @@ async function writeToStore(tx: StoreTransaction, name: JsonFileName, value: unk
                 availableQuantity: Number(data.available_quantity || 0), isAvailable: Boolean(data.is_available),
                 images: Array.isArray(data.images) ? data.images.map(String) : [], category: String(data.category || 'Other'),
                 subcategory: data.subcategory == null ? null : String(data.subcategory),
+                brand: String(data.brand || 'Unbranded'),
                 tags: Array.isArray(data.tags) ? data.tags.map(String) : [], likesCount: Number(data.likes_count || 0),
                 vendorWhatsapp: String(data.vendor_whatsapp || ''), vendorBusinessName: data.vendor_business_name == null ? null : String(data.vendor_business_name),
                 location: data.location == null ? null : String(data.location), condition: data.condition == null ? null : String(data.condition),
                 detailGalleryEnabled: Boolean(data.detail_gallery_enabled), isLatest: Boolean(data.is_latest),
                 isTopSelling: Boolean(data.is_top_selling), relatedProductsMode: data.related_products_mode == null ? null : String(data.related_products_mode),
+                isFeatured: Boolean(data.is_featured), featuredUntil: data.featured_until == null ? null : String(data.featured_until),
                 relatedProductIds: Array.isArray(data.related_product_ids) ? data.related_product_ids.map(String) : [],
                 };
                 await tx.product.upsert({
@@ -239,13 +265,23 @@ async function writeToStore(tx: StoreTransaction, name: JsonFileName, value: unk
             });
             for (const { data, index } of items) {
                 const vendorData = {
-                vendorId: String(data.vendor_id), sortOrder: index, businessName: String(data.business_name || ''),
+                vendorId: String(data.vendor_id), sortOrder: index, username: String(data.username || ''), businessName: String(data.business_name || ''),
                 ownerName: String(data.owner_name || ''), email: String(data.email || ''),
                 whatsappNumber: String(data.whatsapp_number || ''), businessAddress: String(data.business_address || ''),
                 businessCategory: String(data.business_category || ''), businessDescription: String(data.business_description || ''),
                 logo: String(data.logo || ''), status: String(data.status || 'suspended'),
                 createdAt: String(data.created_at || new Date().toISOString()),
                 updatedAt: data.updated_at == null ? null : String(data.updated_at),
+                accessDays: data.access_days == null ? null : Number(data.access_days),
+                accessExpiresAt: data.access_expires_at == null ? null : String(data.access_expires_at),
+                paymentAuthorizedAt: data.payment_authorized_at == null ? null : String(data.payment_authorized_at),
+                paymentAuthorizedBy: data.payment_authorized_by == null ? null : String(data.payment_authorized_by),
+                maxProducts: data.max_products == null ? null : Number(data.max_products),
+                allowedCategories: Array.isArray(data.allowed_categories) ? data.allowed_categories.map(String) : [],
+                allowedBrands: Array.isArray(data.allowed_brands) ? data.allowed_brands.map(String) : [],
+                categoryBrands: data.category_brands == null ? Prisma.JsonNull : asJson(data.category_brands),
+                subscriptionStatus: data.subscription_status == null ? null : String(data.subscription_status),
+                subscriptionExpiresAt: data.subscription_expires_at == null ? null : String(data.subscription_expires_at),
                 };
                 await tx.vendor.upsert({
                     where: { vendorId: vendorData.vendorId },
@@ -261,15 +297,29 @@ async function writeToStore(tx: StoreTransaction, name: JsonFileName, value: unk
                 requestId: String(data.request_id), sortOrder: index, status: String(data.status || 'pending'),
                 businessName: String(data.business_name || ''), ownerName: String(data.owner_name || ''),
                 email: String(data.email || ''), supabaseUid: data.supabase_uid == null ? undefined : String(data.supabase_uid),
+                username: String(data.username || ''),
                 whatsappNumber: String(data.whatsapp_number || ''), businessAddress: String(data.business_address || ''),
                 businessCategory: String(data.business_category || ''), businessDescription: String(data.business_description || ''),
                 productMainCategory: String(data.product_main_category || 'Other Categories'),
                 productSubcategory: String(data.product_subcategory || 'Other'),
+                requestedBrand: String(data.requested_brand || 'Unbranded'),
+                verificationDocType: String(data.verification_doc_type || ''),
+                verificationDocPath: String(data.verification_doc_path || ''),
+                paymentReceiptPath: String(data.payment_receipt_path || ''),
+                paymentRequired: Boolean(data.payment_required),
+                paymentAmount: data.payment_amount == null ? null : Number(data.payment_amount),
+                paymentInstructions: String(data.payment_instructions || ''),
+                paymentStatus: String(data.payment_status || 'not_required'),
+                reviewDueAt: data.review_due_at == null ? null : String(data.review_due_at),
+                accessDays: data.access_days == null ? null : Number(data.access_days),
                 logo: String(data.logo || ''), vendorId: data.vendor_id == null ? undefined : String(data.vendor_id),
                 createdAt: String(data.created_at || new Date().toISOString()),
                 approvedAt: data.approved_at == null ? undefined : String(data.approved_at),
                 rejectedAt: data.rejected_at == null ? undefined : String(data.rejected_at),
                 rejectionId: data.rejection_id == null ? undefined : String(data.rejection_id),
+                setupTokenHash: data.setup_token_hash == null ? undefined : String(data.setup_token_hash),
+                setupTokenExpiresAt: data.setup_token_expires_at == null ? undefined : String(data.setup_token_expires_at),
+                setupTokenUsedAt: data.setup_token_used_at == null ? undefined : String(data.setup_token_used_at),
             })) as any });
             return;
         }

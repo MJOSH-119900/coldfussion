@@ -8,7 +8,7 @@ export async function requestPasswordResetAction(email: string, role: 'admin' | 
         return { success: false, error: 'Invalid account type.' };
 
     const normalizedEmail = email.trim().toLowerCase();
-    const redirectTo = getAuthCallbackUrl('/password-reset/complete');
+    const redirectTo = getAuthCallbackUrl(role === 'vendor' ? '/vendor/setup' : '/password-reset/complete');
     const supabase = await createSupabaseServerClient();
     const { error } = await supabase.auth.resetPasswordForEmail(normalizedEmail, { redirectTo });
     if (error) {

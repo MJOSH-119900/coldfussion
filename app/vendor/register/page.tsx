@@ -1,15 +1,16 @@
 'use client';
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
-import { registerVendorAction } from '../../(admin)/admin/actions';
+import { getVendorApplicationSettingsAction, registerVendorAction } from '../../(admin)/admin/actions';
 import { useToast } from '../../components/ToastProvider';
 import { useBranding } from '../../(public)/components/BrandingProvider';
-import PasswordInput from '../../components/PasswordInput';
 import { optimizeImageInput } from '../../../lib/image-optimizer';
 import { getProductSubcategories, PRODUCT_MAIN_CATEGORIES } from '../../../lib/product-categories';
+import { DEFAULT_VENDOR_ONBOARDING_SETTINGS, type VendorOnboardingSettings } from '../../../lib/vendor-onboarding';
 
 const businessFields = [
+    { name: 'username', label: 'Username', type: 'text', placeholder: 'Choose a seller name', autoComplete: 'username' },
     { name: 'business_name', label: 'Business name', type: 'text', placeholder: 'Your store or business name', autoComplete: 'organization' },
     { name: 'owner_name', label: 'Owner full name', type: 'text', placeholder: 'Name of the primary contact', autoComplete: 'name' },
     { name: 'email', label: 'Email address', type: 'email', placeholder: 'you@example.com', autoComplete: 'email' },
@@ -18,7 +19,6 @@ const businessFields = [
 ] as const;
 
 const fieldClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-violet-500 focus:bg-white focus:ring-4 focus:ring-violet-100';
-const passwordFieldClass = fieldClass.replace(/^mt-2\s+/, '');
 
 export default function VendorRegister() {
     const { notify } = useToast();
@@ -27,10 +27,26 @@ export default function VendorRegister() {
     const [done, setDone] = useState(false);
     const [error, setError] = useState('');
     const [whatsappUrl, setWhatsappUrl] = useState('');
-    const [emailConfirmationRequired, setEmailConfirmationRequired] = useState(true);
+    const [requestId, setRequestId] = useState('');
+    const [whatsappSettingsUnavailable, setWhatsappSettingsUnavailable] = useState(false);
+    const [invitationSent, setInvitationSent] = useState(false);
+    const [onboardingSettings, setOnboardingSettings] = useState<VendorOnboardingSettings>(DEFAULT_VENDOR_ONBOARDING_SETTINGS);
+    const [settingsLoaded, setSettingsLoaded] = useState(false);
     const [mainCategory, setMainCategory] = useState('');
     const [subcategory, setSubcategory] = useState('');
     const subcategories = getProductSubcategories(mainCategory);
+
+    useEffect(() => {
+        let active = true;
+        void getVendorApplicationSettingsAction().then(settings => {
+            if (active) setOnboardingSettings(settings);
+        }).catch(error => {
+            console.error('Could not load vendor application instructions:', error);
+        }).finally(() => {
+            if (active) setSettingsLoaded(true);
+        });
+        return () => { active = false; };
+    }, []);
 
     async function submit(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
@@ -46,8 +62,10 @@ export default function VendorRegister() {
                 return;
             }
             setDone(true);
+            setRequestId(result.requestId || '');
             setWhatsappUrl(result.whatsappUrl || '');
-            setEmailConfirmationRequired(Boolean(result.needsEmailConfirmation));
+            setWhatsappSettingsUnavailable(Boolean(result.whatsappSettingsUnavailable));
+            setInvitationSent(Boolean(result.invitationSent));
             notify('success', 'Your seller application is waiting for admin approval.', 'Application submitted');
         }
         catch (err) {
@@ -76,10 +94,10 @@ export default function VendorRegister() {
           <div className="bg-gradient-to-r from-violet-50 via-white to-fuchsia-50 px-6 py-8 sm:px-10 sm:py-10">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-extrabold uppercase tracking-wider text-violet-800">Seller application</span>
-              <span className="text-xs font-semibold text-slate-500">A few details to get started</span>
+              <span className="text-xs font-semibold text-slate-500">Apply for a verified seller account</span>
             </div>
             <h1 className="mt-4 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">Grow your business with {brand.companyName}.</h1>
-            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">Tell us about your business. Our team will review your application, and you can share the details directly with the admin on WhatsApp after submitting.</p>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-600 sm:text-base">Submit your business details and verification documents. We aim to review applications within 24 hours on workdays. Your vendor account is enabled after admin approval.</p>
             <div className="mt-6 flex flex-wrap gap-3 text-xs font-semibold text-slate-600">
               <span className="rounded-full border border-slate-200 bg-white/80 px-3 py-2">01&nbsp; Business details</span>
               <span className="rounded-full border border-slate-200 bg-white/80 px-3 py-2">02&nbsp; Account security</span>
@@ -91,10 +109,10 @@ export default function VendorRegister() {
             {done ? <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 sm:p-8">
               <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-emerald-100 text-xl font-black text-emerald-700" aria-hidden="true">✓</span>
               <h2 className="mt-4 text-2xl font-black text-emerald-950">Application received</h2>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-emerald-900">Your application is saved and pending administrator review. {emailConfirmationRequired ? 'Confirm your email using the link we sent. ' : ''}You can sign in after your seller account is approved.</p>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-emerald-900">Your application {requestId ? `(${requestId}) ` : ''}is saved and pending administrator review. {invitationSent ? 'We sent a secure account setup link to your email. You can set your password now; dashboard access starts after approval.' : 'The setup email could not be sent yet. Your application is saved for the admin, who can approve it and retry the invitation. You do not need to apply again.'}</p>
               {whatsappUrl
                 ? <a href={whatsappUrl} target="_blank" rel="noopener noreferrer" className="mt-6 inline-flex rounded-xl bg-emerald-700 px-5 py-3 text-sm font-bold text-white transition hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-200">Share application on WhatsApp ↗</a>
-                : <p className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">Admin WhatsApp is not configured. Your application is saved and visible to the administrator.</p>}
+                : <p className="mt-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{whatsappSettingsUnavailable ? 'Your application is saved, but admin WhatsApp settings could not be loaded. Contact the store administrator to share your application.' : 'Admin WhatsApp is not configured. Your application is saved and visible to the administrator.'}</p>}
               <div><Link href="/" className="mt-6 inline-block text-sm font-bold text-violet-700 hover:text-violet-900">Back to storefront</Link></div>
             </div> : <form encType="multipart/form-data" onSubmit={submit} className="space-y-9">
               <section aria-labelledby="seller-business-heading">
@@ -115,7 +133,7 @@ export default function VendorRegister() {
                 </label>
                 <div className="mt-5 rounded-2xl border border-violet-100 bg-violet-50/60 p-4 sm:p-5">
                   <h3 className="text-sm font-black text-slate-900">Your first product category</h3>
-                  <p className="mt-1 text-xs leading-5 text-slate-600">Your first approved product must match this category and subcategory. You can request approval for additional products later.</p>
+                  <p className="mt-1 text-xs leading-5 text-slate-600">The base plan includes one category, one brand in that category, and five product slots. You can request additional access later.</p>
                   <div className="mt-4 grid gap-4 sm:grid-cols-2">
                     <label className="block text-sm font-bold text-slate-700">
                       Main category
@@ -135,25 +153,45 @@ export default function VendorRegister() {
                       Specify the product or subcategory
                       <input required maxLength={100} name="product_subcategory_custom" placeholder="For example, handmade baskets" className={fieldClass}/>
                     </label>}
+                    <label className="block text-sm font-bold text-slate-700 sm:col-span-2">
+                      First brand
+                      <input required maxLength={80} name="requested_brand" placeholder="Brand name (or Unbranded)" className={fieldClass}/>
+                    </label>
                   </div>
                 </div>
               </section>
 
+              <section aria-labelledby="seller-verification-heading" className="border-t border-slate-100 pt-8">
+                <h2 id="seller-verification-heading" className="text-lg font-black text-slate-900">Business verification</h2>
+                <p className="mt-1 text-sm text-slate-500">Upload one CAC certificate or NIN document. Files are private and only available to admins reviewing your application.</p>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                  <label className="block text-sm font-bold text-slate-700">Document type
+                    <select required name="verification_doc_type" defaultValue="" className={fieldClass}>
+                      <option value="" disabled>Select CAC or NIN</option>
+                      <option value="CAC">CAC certificate</option>
+                      <option value="NIN">NIN document</option>
+                    </select>
+                  </label>
+                  <label className="block text-sm font-bold text-slate-700">Verification file
+                    <input required name="verification_document" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" className={fieldClass}/>
+                    <span className="mt-1 block text-xs font-normal text-slate-500">PDF, JPG, PNG, or WEBP; maximum 1 MB.</span>
+                  </label>
+                </div>
+              </section>
+
+              {settingsLoaded && onboardingSettings.payment_enabled && <section aria-labelledby="seller-payment-heading" className="border-t border-slate-100 pt-8">
+                <h2 id="seller-payment-heading" className="text-lg font-black text-slate-900">Application payment</h2>
+                <p className="mt-1 text-sm font-semibold text-slate-700">Amount: ₦{onboardingSettings.payment_amount.toLocaleString()}</p>
+                <p className="mt-2 whitespace-pre-wrap rounded-xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">{onboardingSettings.payment_instructions}</p>
+                <label className="mt-4 block text-sm font-bold text-slate-700">Payment receipt
+                  <input required name="payment_receipt" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp,application/pdf,image/jpeg,image/png,image/webp" className={fieldClass}/>
+                  <span className="mt-1 block text-xs font-normal text-slate-500">PDF, JPG, PNG, or WEBP; maximum 1 MB. Admin approval follows payment verification.</span>
+                </label>
+              </section>}
+
               <section aria-labelledby="seller-security-heading" className="border-t border-slate-100 pt-8">
-                <div className="mb-5">
-                  <h2 id="seller-security-heading" className="text-lg font-black text-slate-900">Secure account setup</h2>
-                  <p className="mt-1 text-sm text-slate-500">Create a new account with a password of at least 12 characters. We’ll confirm your email before your application is reviewed. Existing accounts cannot register again.</p>
-                </div>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="text-sm font-bold text-slate-700">
-                    <label htmlFor="vendor-register-password">Password</label>
-                    <PasswordInput id="vendor-register-password" required minLength={12} name="password" autoComplete="new-password" placeholder="At least 12 characters" wrapperClassName="mt-2" className={passwordFieldClass} toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
-                  </div>
-                  <div className="text-sm font-bold text-slate-700">
-                    <label htmlFor="vendor-register-password-confirm">Confirm password</label>
-                    <PasswordInput id="vendor-register-password-confirm" required minLength={12} name="password_confirmation" autoComplete="new-password" placeholder="Enter it again" wrapperClassName="mt-2" className={passwordFieldClass} toggleClassName="text-emerald-700 hover:text-emerald-900 focus:ring-emerald-300" />
-                  </div>
-                </div>
+                <h2 id="seller-security-heading" className="text-lg font-black text-slate-900">What happens next</h2>
+                <p className="mt-2 text-sm leading-6 text-slate-600">We email you a secure account setup link after submission. Set your password, then wait for the admin to verify your documents and any payment and activate your account.</p>
               </section>
 
               <section aria-labelledby="seller-logo-heading" className="border-t border-slate-100 pt-8">
@@ -168,7 +206,8 @@ export default function VendorRegister() {
 
               {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</p>}
               <div className="border-t border-slate-100 pt-6">
-                <button disabled={pending} className="w-full rounded-xl bg-violet-700 py-3.5 font-bold text-white shadow-lg shadow-violet-700/15 transition hover:bg-violet-800 focus:outline-none focus:ring-4 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{pending ? 'Submitting application…' : 'Submit seller application'}</button>
+                <p className="mb-4 text-sm text-slate-500">Applications submitted on workdays are reviewed within 24 hours.</p>
+                <button disabled={pending || !settingsLoaded} className="w-full rounded-xl bg-violet-700 py-3.5 font-bold text-white shadow-lg shadow-violet-700/15 transition hover:bg-violet-800 focus:outline-none focus:ring-4 focus:ring-violet-200 disabled:cursor-not-allowed disabled:opacity-50">{pending ? 'Submitting application…' : !settingsLoaded ? 'Loading application settings…' : 'Submit seller application'}</button>
                 <p className="mt-4 text-center text-sm text-slate-500">Already approved? <Link href="/vendor/login" className="font-bold text-violet-700 hover:text-violet-900">Sign in to your account</Link></p>
               </div>
             </form>}

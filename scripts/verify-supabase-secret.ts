@@ -1,8 +1,13 @@
 import dotenv from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
 
-dotenv.config({ path: '.env.local' });
-dotenv.config({ path: '.env' });
+const verificationEnvFile = process.env.SUPABASE_VERIFY_ENV_FILE;
+if (verificationEnvFile) {
+  dotenv.config({ path: verificationEnvFile, override: true });
+} else {
+  dotenv.config({ path: '.env.local' });
+  dotenv.config({ path: '.env' });
+}
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const secret = process.env.SUPABASE_SECRET_KEY;

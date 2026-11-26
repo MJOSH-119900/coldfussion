@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { useCart } from '../../(public)/components/CartProvider';
 import ProductCard from '../../(public)/components/ProductCard';
+import QuantityStepper from '../../(public)/components/QuantityStepper';
 import { Product } from '../../(public)/components/types/store';
 import type { ProductFeedback } from '../../(public)/components/types/store';
 import ProductFeedbackSection from './ProductFeedbackSection';
@@ -24,8 +25,8 @@ export default function ProductDetailsClient({ product, related, feedback }: {
     const { addToCart, toggleWishlist, isWishlisted, buyNow } = useCart();
     const { notify } = useToast();
     const { brand } = useBranding();
-    const gallery = product.detail_gallery_enabled ? (product.images || []).slice(0, 4) : (product.images || []).slice(0, 1);
-    const unavailable = product.is_available === false || (product.available_quantity ?? 0) <= 0;
+    const gallery = (product.images || []).slice(0, 3);
+    const unavailable = (product.available_quantity ?? 0) <= 0;
     const max = product.available_quantity ?? 1;
     const selectedVariant = product.size_prices?.find(v => v.size === selectedSize);
     const selectedPrice = selectedVariant?.price ?? product.price;
@@ -94,13 +95,18 @@ export default function ProductDetailsClient({ product, related, feedback }: {
           <div className="mt-4 flex flex-wrap gap-2"><span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-bold uppercase text-slate-700">{(product.condition || 'new') === 'spare-part' ? 'Spare part' : product.condition || 'New'}</span>{product.location && <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">⌖ {product.location}</span>}</div>
           <p className="mt-6 leading-7 text-slate-600">{product.description}</p>
           <p className={`mt-4 text-sm font-semibold ${unavailable ? 'text-red-600' : 'text-emerald-600'}`}>{unavailable ? 'Currently unavailable' : `${product.available_quantity ?? 0} available`}</p>
-          <div className="mt-5 flex items-center gap-3">
-            <span className="text-sm font-semibold text-slate-600">Quantity</span>
-            <div className="flex items-center rounded-xl border border-slate-200">
-              <button onClick={() => setQuantity(q => Math.max(1, q - 1))} disabled={unavailable} className="px-4 py-2 text-lg font-bold disabled:opacity-40">−</button>
-              <span className="min-w-10 text-center font-bold">{quantity}</span>
-              <button onClick={() => setQuantity(q => Math.min(max, q + 1))} disabled={unavailable} className="px-4 py-2 text-lg font-bold disabled:opacity-40">+</button>
+          <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50/80 px-4 py-3 sm:justify-start sm:gap-6">
+            <div>
+              <p className="text-[11px] font-extrabold uppercase tracking-[.14em] text-slate-500">Quantity</p>
+              <p className="mt-0.5 hidden text-xs text-slate-400 sm:block">Choose how many to order</p>
             </div>
+            <QuantityStepper
+              value={quantity}
+              onDecrease={() => setQuantity(current => Math.max(1, current - 1))}
+              onIncrease={() => setQuantity(current => Math.min(max, current + 1))}
+              decreaseDisabled={unavailable || quantity <= 1}
+              increaseDisabled={unavailable || quantity >= max}
+            />
           </div>
           <div className="mt-6 grid grid-cols-2 gap-3">
             <button disabled={unavailable} onClick={() => { const added = addToCart(cartProduct, quantity, selectedSize || undefined); notify(added ? 'success' : 'warning', added ? `${quantity} × ${product.title} added to your cart.` : 'This item is unavailable or the requested quantity exceeds the available stock.', added ? 'Added to cart' : 'Unable to add item'); }} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 px-4 py-3 font-bold text-slate-800 transition hover:border-violet-500 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-40"><svg aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-5 w-5"><path strokeLinecap="round" strokeLinejoin="round" d="M3 3h2l2.2 11.1a2 2 0 0 0 2 1.6h8.9a2 2 0 0 0 1.9-1.4L22 7H6"/><circle cx="10" cy="20" r="1"/><circle cx="18" cy="20" r="1"/></svg><span>Add to cart</span></button>

@@ -11,7 +11,7 @@ export default function ProductCard({ product, compact = false }: {
     const image = product.images?.[0];
     const { addToCart, toggleWishlist, isWishlisted, buyNow } = useCart();
     const { notify } = useToast();
-    const unavailable = product.is_available === false || (product.available_quantity ?? 1) <= 0;
+    const unavailable = (product.available_quantity ?? 0) <= 0;
     const startingVariant = product.size_prices?.length
         ? product.size_prices.reduce((lowest, variant) => variant.price < lowest.price ? variant : lowest)
         : undefined;
@@ -26,6 +26,7 @@ export default function ProductCard({ product, compact = false }: {
           </div>
         </Link>
         <div className="absolute left-3 top-3 flex flex-wrap gap-1">
+          {product.is_featured && product.featured_until && Date.parse(product.featured_until) > Date.now() && <span className="rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-bold uppercase text-white">Featured</span>}
           {product.giveaway && <span className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-bold uppercase text-white">Giveaway</span>}
           {discounted && <span className="rounded-full bg-red-600 px-2.5 py-1 text-[10px] font-bold uppercase text-white">Slash price</span>}
         </div>
@@ -40,6 +41,7 @@ export default function ProductCard({ product, compact = false }: {
           <span className="ml-2 rounded-full bg-slate-100 px-2 py-1 text-[10px] font-bold uppercase text-slate-600">{(product.condition || 'new') === 'spare-part' ? 'Spare part' : product.condition || 'New'}</span>
           {product.location && <p className="mt-1 truncate text-xs text-slate-500">⌖ {product.location}</p>}
           <h3 className="mt-1 line-clamp-1 font-semibold text-slate-900">{product.title}</h3>
+          {product.brand && <p className="mt-1 text-xs font-medium text-slate-500">Brand: {product.brand}</p>}
           {product.giveaway_announcement && <p className="mt-1 line-clamp-1 text-xs font-medium text-emerald-700">{product.giveaway_announcement}</p>}
           {product.giveaway && <p className="mt-1 text-[11px] font-bold uppercase tracking-wide text-emerald-600">Giveaway item</p>}
           <div className="mt-2 flex items-end gap-2">

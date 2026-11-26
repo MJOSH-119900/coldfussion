@@ -86,7 +86,7 @@ export function CartProvider({ children }: {
         return () => window.removeEventListener('storage', syncStorage);
     }, [hydrated]);
     const addToCart = (product: Product, quantity = 1, selectedSize?: string): boolean => {
-        if (product.is_available === false || (product.available_quantity ?? 1) <= 0) return false;
+        if ((product.available_quantity ?? 0) <= 0) return false;
         const max = product.available_quantity ?? Infinity;
         const cartKey = `${product.id}::${selectedSize || ''}`;
         const existingItem = cart.find(item => (item.cart_key || `${item.id}::${item.selected_size || ''}`) === cartKey);
@@ -117,12 +117,8 @@ export function CartProvider({ children }: {
     };
     const decrement = (id: string) => {
         const item = cart.find(value => (value.cart_key || value.id) === id);
-        if (!item)
-            return;
-        if (item.quantity <= 1)
-            removeFromCart(id);
-        else
-            updateQuantity(id, item.quantity - 1);
+        if (!item || item.quantity <= 1) return;
+        updateQuantity(id, item.quantity - 1);
     };
     const removeFromCart = (id: string) => setCart(current => current.filter(item => (item.cart_key || item.id) !== id));
     const clearCart = () => setCart([]);
@@ -131,7 +127,7 @@ export function CartProvider({ children }: {
     };
     const isWishlisted = (id: string) => wishlist.includes(id);
     const buyNow = (product: Product, quantity = 1, selectedSize?: string) => {
-        if (product.is_available === false || (product.available_quantity ?? 1) <= 0) return;
+        if ((product.available_quantity ?? 0) <= 0) return;
         sessionStorage.setItem(BUY_NOW_KEY, JSON.stringify([{ ...product, selected_size: selectedSize, cart_key: `${product.id}::${selectedSize || ''}`, quantity }]));
         router.push('/checkout?mode=buy-now');
     };
@@ -139,7 +135,7 @@ export function CartProvider({ children }: {
         cart,
         isReady: hydrated,
         wishlist,
-        cartCount: cart.reduce((sum, item) => sum + item.quantity, 0),
+        cartCount: cart.length,
         cartTotal: cart.reduce((sum, item) => sum + item.price * item.quantity, 0),
         addToCart,
         updateQuantity,

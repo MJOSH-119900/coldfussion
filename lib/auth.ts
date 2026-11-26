@@ -3,12 +3,14 @@ import { cookies } from 'next/headers';
 import { readJson } from './json-store';
 import { createSupabaseServerClient } from '../server/supabase';
 import { createSupabaseAdminClient } from '../server/supabase-admin';
+import { isVendorAccessActive } from './vendor-onboarding';
 
 type Session = {
     role: 'admin' | 'super_admin' | 'vendor';
     vendorId?: string;
     email: string;
     uid: string;
+    renewalOnly?: boolean;
 };
 
 type AppMetadata = {
@@ -53,10 +55,15 @@ export async function getSession(): Promise<Session | null> {
     }
 
     if (metadata.role === 'vendor' && typeof metadata.vendor_id === 'string') {
-        const vendors = await readJson<Array<{ vendor_id?: string; status?: string }>>('vendors.json', []);
+        const vendors = await readJson<Array<{ vendor_id?: string; status?: string; access_expires_at?: string }>>('vendors.json', []);
         const vendor = vendors.find(item => item.vendor_id === metadata.vendor_id);
-        if (vendor && ['approved', 'active'].includes(String(vendor.status)))
+        if (vendor && isVendorAccessActive(vendor))
             return { role: 'vendor', vendorId: metadata.vendor_id, email, uid: user.id };
+        if (vendor && ['approved', 'active'].includes(String(vendor.status || '')) && vendor.access_expires_at) {
+            const expiresAt = Date.parse(vendor.access_expires_at);
+            if (Number.isFinite(expiresAt) && expiresAt <= Date.now())
+                return { role: 'vendor', vendorId: metadata.vendor_id, email, uid: user.id, renewalOnly: true };
+        }
     }
 
     return null;
@@ -90,7 +97,7 @@ export async function requireSuperAdmin() {
 
 export async function requireVendor() {
     const session = await requireRole('vendor');
-    if (!session.vendorId) throw new Error('Vendor session is missing vendor ID');
+    if (!session.vendorId || session.renewalOnly) throw new Error('Vendor access has expired. Request a renewal to restore dashboard access.');
     return session as Session & { vendorId: string };
 }
 

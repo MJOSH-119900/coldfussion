@@ -1,5 +1,7 @@
 export interface Product {
     id: string;
+    created_at?: string;
+    vendor_item_rank?: number;
     vendor_id: string;
     title: string;
     description: string;
@@ -13,6 +15,7 @@ export interface Product {
     images: string[];
     category: string;
     subcategory?: string;
+    brand?: string;
     tags: string[];
     likes_count: number;
     vendor_whatsapp: string;
@@ -22,10 +25,12 @@ export interface Product {
     detail_gallery_enabled?: boolean;
     is_latest?: boolean;
     is_top_selling?: boolean;
+    is_featured?: boolean;
+    featured_until?: string;
     related_products_mode?: 'category' | 'random' | 'manual';
     related_product_ids?: string[];
 }
-export type VendorProductRequestStatus = 'pending' | 'approved' | 'rejected';
+export type VendorProductRequestStatus = 'pending' | 'approved' | 'rejected' | 'revoked';
 export interface VendorProductRequest {
     request_id: string;
     vendor_id: string;
@@ -58,6 +63,32 @@ export interface VendorProductAccess {
     remaining_permissions: number;
     requests: VendorProductRequest[];
     approved_requests: VendorProductRequest[];
+    plan_enabled?: boolean;
+    max_products?: number | null;
+    allowed_categories?: string[] | null;
+    allowed_brands?: string[] | null;
+    category_brands?: Record<string, string[]> | null;
+    subscription_expires_at?: string | null;
+}
+export interface VendorAdminProductAudit {
+    id: string;
+    title: string;
+    category: string;
+    subcategory?: string;
+    permission_status: 'initial' | 'approved-request' | 'unmatched';
+    permission_request_id?: string;
+}
+export interface VendorAdminOverview {
+    vendor_id: string;
+    username?: string;
+    business_name: string;
+    email: string;
+    status: string;
+    access_days?: number;
+    access_expires_at?: string;
+    approved_main_category: string;
+    approved_subcategory: string;
+    products: VendorAdminProductAudit[];
 }
 export type BannerIntervalUnit = 'seconds' | 'hours' | 'days';
 export interface BannerSlide {

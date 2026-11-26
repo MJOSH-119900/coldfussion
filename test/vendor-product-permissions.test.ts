@@ -114,3 +114,14 @@ test('does not reuse a fulfilled approval or fail open when policy is missing', 
     assert.equal(fulfilled.allowed, false);
     assert.equal(missingPolicy.allowed, false);
 });
+
+test('does not allow a revoked approval to be used again', () => {
+    const result = authorizeVendorProductSubmission(
+        { ...initialPolicy, initialPermissionAvailable: false },
+        [{ ...request, status: 'revoked' }],
+        { category: request.mainCategory, subcategory: request.subcategory, title: request.productName, description: request.productDescription },
+        request.requestId,
+    );
+
+    assert.equal(result.allowed, false);
+});

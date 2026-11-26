@@ -4,7 +4,7 @@ import { Product } from '../../../(public)/components/types/store';
 import type { VendorProductAccess } from '../../../(public)/components/types/store';
 import { saveProductAction } from '../actions';
 import { useToast } from '../../../components/ToastProvider';
-import { optimizeImageInput } from '../../../../lib/image-optimizer';
+import { optimizeProductImageInput } from '../../../../lib/image-optimizer';
 import { getProductSubcategories, isProductMainCategory, PRODUCT_MAIN_CATEGORIES } from '../../../../lib/product-categories';
 interface FormProps {
     currentVendorId: string;
@@ -19,8 +19,9 @@ interface FormProps {
 export default function ProductForm({ currentVendorId, editProduct, products, onSuccess, onCancel, isAdmin = false, vendorProductAccess, preferredRequestId }: FormProps) {
     const [loading, setLoading] = useState(false);
     const [selectedCount, setSelectedCount] = useState(0);
-    const [selectedCategory, setSelectedCategory] = useState(editProduct?.category || '');
-    const [selectedSubcategory, setSelectedSubcategory] = useState(editProduct?.subcategory || '');
+    const [selectedCategory, setSelectedCategory] = useState(editProduct?.category || vendorProductAccess?.allowed_categories?.[0] || '');
+    const [selectedSubcategory, setSelectedSubcategory] = useState(editProduct?.subcategory || vendorProductAccess?.subcategory || '');
+    const [selectedBrand, setSelectedBrand] = useState(editProduct?.brand || vendorProductAccess?.category_brands?.[editProduct?.category || vendorProductAccess?.allowed_categories?.[0] || '']?.[0] || 'Unbranded');
     const [customSubcategory, setCustomSubcategory] = useState('');
     const [permissionId, setPermissionId] = useState(
         preferredRequestId && vendorProductAccess?.approved_requests.some(request => request.request_id === preferredRequestId)
@@ -33,6 +34,8 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     const [title, setTitle] = useState(editProduct?.title || initialRequest?.product_name || '');
     const [description, setDescription] = useState(editProduct?.description || initialRequest?.product_description || '');
     const { notify } = useToast();
+    const planEnabled = Boolean(vendorProductAccess?.plan_enabled);
+    const allowedBrandsForCategory = vendorProductAccess?.category_brands?.[selectedCategory] || vendorProductAccess?.allowed_brands || [];
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         const formElement = e.currentTarget;
@@ -79,7 +82,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     return <form onSubmit={handleSubmit} encType="multipart/form-data" className="admin-product-form max-h-[calc(100dvh-7rem)] overflow-y-auto overflow-x-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
     <div className="min-w-0 space-y-5">
     <div><h2 className="text-xl font-bold text-slate-800">{editProduct ? 'Edit product' : 'Add a product'}</h2><p className="mt-1 text-xs text-slate-500">Manage pricing, availability, gallery placement and storefront announcements.</p></div>
-    {!editProduct && vendorProductAccess && <div className="rounded-xl border border-violet-200 bg-violet-50 p-4">
+    {!editProduct && vendorProductAccess && !planEnabled && <div className="rounded-xl border border-violet-200 bg-violet-50 p-4">
       <label className="mb-1 block text-sm font-bold text-slate-800">Upload permission</label>
       <select required value={permissionId} onChange={event => handlePermissionChange(event.target.value)} className="w-full rounded-lg border border-violet-200 bg-white px-3 py-2">
         {vendorProductAccess.initial_permission_available && <option value="initial">First product — {vendorProductAccess.main_category} / {vendorProductAccess.subcategory}</option>}
@@ -93,6 +96,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
       <div><label className="mb-1 block text-sm font-semibold text-slate-700">Selling price (₦)</label><input required min="0" step="0.01" type="number" name="price" defaultValue={editProduct?.price ?? ''} placeholder="Enter current selling price" className="w-full rounded-lg border px-3 py-2"/></div>
       <div><label className="mb-1 block text-sm font-semibold text-slate-700">Previous price for all sizes (₦)</label><input min="0" step="0.01" type="number" name="compare_at_price" defaultValue={editProduct?.compare_at_price ?? ''} placeholder="Optional — applies to all sizes" className="w-full rounded-lg border px-3 py-2"/><p className="mt-1 text-xs text-slate-500">This is the default slash price for every size. A previous price after a semicolon below overrides it for that size only.</p></div>
     </div>
+    <div><label className="mb-1 block text-sm font-semibold text-slate-700">Brand</label>{planEnabled && allowedBrandsForCategory.length ? <select required name="brand" value={allowedBrandsForCategory.includes(selectedBrand) ? selectedBrand : allowedBrandsForCategory[0]} onChange={event => setSelectedBrand(event.target.value)} className="w-full rounded-lg border bg-white px-3 py-2">{allowedBrandsForCategory.map(value => <option key={value}>{value}</option>)}</select> : <input required maxLength={80} name="brand" defaultValue={editProduct?.brand || 'Unbranded'} placeholder="Brand name or Unbranded" className="w-full rounded-lg border px-3 py-2"/>}</div>
     <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4">
       <label className="mb-1 block text-sm font-bold text-slate-800">Custom sizes and prices (optional)</label>
       <p className="mb-2 text-xs leading-5 text-slate-600">Add up to 20 sizes, one per line. The main previous-price field applies to all sizes. Add a previous price after a semicolon to override it for that size only. Format: <strong>Size = Price | Equivalent; Previous price</strong>. For example, with a main previous price of 8000, S = 5000; 6500 gives S its own 6500 previous price, while M = 7000 keeps the main 8000 previous price.</p>
@@ -100,7 +104,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     </div>
 
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      {vendorProductAccess
+      {vendorProductAccess && !planEnabled
         ? <div className="sm:col-span-2">
             <p className="mb-1 text-sm font-semibold text-slate-700">Main category</p>
             <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">{editProduct?.category || permissionCategory || 'Select an upload permission'}</p>
@@ -109,7 +113,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
             <p className="mt-1 text-xs text-slate-500">Subcategory: {editProduct?.subcategory || (editProduct ? 'Legacy / not set' : permissionSubcategory)}</p>
           </div>
         : <>
-            <div><label className="mb-1 block text-sm font-semibold text-slate-700">Main category</label><select required name="category" value={selectedCategory} onChange={event => { setSelectedCategory(event.target.value); setSelectedSubcategory(''); setCustomSubcategory(''); }} className="w-full rounded-lg border bg-white px-3 py-2"><option value="" disabled>Select a main category</option>{PRODUCT_MAIN_CATEGORIES.map(value => <option key={value} value={value}>{value}</option>)}{editProduct && !isProductMainCategory(editProduct.category) && <option value={editProduct.category}>{editProduct.category} (existing category)</option>}</select></div>
+            <div><label className="mb-1 block text-sm font-semibold text-slate-700">Main category</label><select required name="category" value={selectedCategory} onChange={event => { setSelectedCategory(event.target.value); setSelectedSubcategory(''); setCustomSubcategory(''); }} className="w-full rounded-lg border bg-white px-3 py-2"><option value="" disabled>Select a main category</option>{(planEnabled ? vendorProductAccess?.allowed_categories || [] : PRODUCT_MAIN_CATEGORIES).map(value => <option key={value} value={value}>{value}</option>)}{editProduct && !isProductMainCategory(editProduct.category) && <option value={editProduct.category}>{editProduct.category} (existing category)</option>}</select></div>
             <div><label className="mb-1 block text-sm font-semibold text-slate-700">Subcategory</label><select name="subcategory" value={selectedSubcategory} onChange={event => { setSelectedSubcategory(event.target.value); setCustomSubcategory(''); }} required={!editProduct || selectedCategory !== editProduct.category || Boolean(editProduct.subcategory)} className="w-full rounded-lg border bg-white px-3 py-2"><option value="" disabled={!editProduct || selectedCategory !== editProduct.category || Boolean(editProduct.subcategory)}>{selectedCategory ? 'Select a subcategory' : 'Select a main category first'}</option>{getProductSubcategories(selectedCategory).map(value => <option key={value} value={value}>{value}</option>)}{legacySubcategory && <option value={legacySubcategory}>{legacySubcategory} (existing subcategory)</option>}</select></div>
             {selectedSubcategory === 'Other' && <label className="text-sm font-semibold text-slate-700 sm:col-span-2">Specify the product or subcategory<input required maxLength={100} name="subcategory_custom" value={customSubcategory} onChange={event => setCustomSubcategory(event.target.value)} placeholder="For example, handmade baskets" className="mt-1 w-full rounded-lg border px-3 py-2"/></label>}
           </>}
@@ -118,13 +122,13 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
     </div>
 
     <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
-      <label className="mb-1 block text-sm font-bold text-slate-800">Product photos (up to 4)</label>
-      <p className="mb-3 text-xs text-slate-500">The first image is the main listing image. Upload up to 4 pictures. Supported files: JPG, JPEG, PNG, WEBP, GIF or AVIF. Use the original picture file, not a web-page link, PDF, HEIC or SVG.</p>
+      <label className="mb-1 block text-sm font-bold text-slate-800">Product photos (up to 3)</label>
+      <p className="mb-3 text-xs text-slate-500">The first image is the main listing image. Upload up to 3 pictures. Supported files: JPG, JPEG, PNG, WEBP, GIF or AVIF. Use the original picture file, not a web-page link, PDF, HEIC or SVG.</p>
       {!isAdmin && <p className="mb-3 rounded-lg border border-violet-100 bg-violet-50 px-3 py-2 text-xs leading-5 text-violet-900">Photo tip: Use sharp, well-lit pictures of the actual item, with a clean background and a few helpful angles. Quality photos can build trust and attract more buyers.</p>}
       {selectedRequest?.product_image && <div className="mb-3"><p className="mb-2 text-xs font-semibold text-violet-800">The approved request image will be used for this product.</p><img src={selectedRequest.product_image} alt={`Approved image for ${selectedRequest.product_name}`} className="h-24 w-24 rounded-lg border object-cover"/></div>}
-      <input type="file" name="image_files" disabled={Boolean(selectedRequest?.product_image)} accept=".jpg,.jpeg,.png,.webp,.gif,.avif,image/jpeg,image/png,image/webp,image/gif,image/avif" multiple onChange={async e => { const input = e.currentTarget; setSelectedCount(-1); input.disabled = true; try { const files = await optimizeImageInput(input); setSelectedCount(files.length); } catch (error) { input.value = ''; setSelectedCount(0); notify('error', error instanceof Error ? error.message : 'Could not optimize the selected images.', 'Image preparation failed'); } finally { input.disabled = false; } }} className="w-full text-sm"/>
-      <p className="mt-2 text-xs text-slate-500">{selectedRequest?.product_image ? 'The approved request image is fixed to this product permission.' : selectedCount < 0 ? 'Optimizing selected images…' : selectedCount ? `${selectedCount} WebP image(s) selected · 80% quality, max 1200px; usually 40–150 KB (500 KB ceiling)` : editProduct ? `${editProduct.images?.length || 0} current image(s)` : 'Images are resized to at most 1200px and converted to WebP at 80% quality before upload.'}</p>
-      {editProduct?.images?.length ? <div className="mt-3 flex flex-wrap gap-2">{editProduct.images.slice(0, 4).map((src, i) => <img key={`${src}-${i}`} src={src} alt={`Current product image ${i + 1}`} className="h-14 w-14 rounded-lg border object-cover"/>)}</div> : null}
+      <input type="file" name="image_files" disabled={Boolean(selectedRequest?.product_image)} accept="image/jpeg,image/png,image/webp" multiple onChange={async e => { const input = e.currentTarget; setSelectedCount(-1); input.disabled = true; try { const files = await optimizeProductImageInput(input); setSelectedCount(files.length); } catch (error) { input.value = ''; setSelectedCount(0); notify('error', error instanceof Error ? error.message : 'Could not optimize the selected images.', 'Image preparation failed'); } finally { input.disabled = false; } }} className="w-full text-sm"/>
+      <p className="mt-2 text-xs text-slate-500">{selectedRequest?.product_image ? 'The approved request image is fixed to this product permission.' : selectedCount < 0 ? 'Compressing selected images…' : selectedCount ? `${selectedCount} WebP image(s) selected · max 800px and 70 KB each` : editProduct ? `${editProduct.images?.length || 0} current image(s)` : 'JPG, PNG, or WebP images are converted to WebP, resized to at most 800px, and limited to 70 KB each.'}</p>
+      {editProduct?.images?.length ? <div className="mt-3 flex flex-wrap gap-2">{editProduct.images.slice(0, 3).map((src, i) => <img key={`${src}-${i}`} src={src} alt={`Current product image ${i + 1}`} className="h-14 w-14 rounded-lg border object-cover"/>)}</div> : null}
     </div>
 
     <div className="space-y-3 rounded-xl border border-slate-200 p-4">
@@ -146,9 +150,7 @@ export default function ProductForm({ currentVendorId, editProduct, products, on
 
     <div className="space-y-3 rounded-xl border border-slate-200 p-4">
       <p className="text-sm font-bold text-slate-800">Availability & storefront</p>
-      <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_available" value="true" defaultChecked={editProduct?.is_available ?? true}/> Product available for enquiry/cart</label>
-      <label className="flex items-start gap-3 text-sm text-slate-700"><input type="checkbox" name="detail_gallery_enabled" value="true" defaultChecked={editProduct?.detail_gallery_enabled ?? false}/><span><strong>Enable product gallery</strong><span className="block text-xs text-slate-500">Show up to 4 photos on the detail page.</span></span></label>
-      <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_latest" value="true" defaultChecked={editProduct?.is_latest ?? false}/> Feature in Latest Drops</label>
+      <p className="text-xs leading-5 text-slate-500">These storefront features update automatically: products are available when stock is above zero, photo galleries appear when multiple photos are added (up to 3), and the 8 newest products appear in Latest Drops.</p>
       {isAdmin && <label className="flex items-center gap-3 text-sm text-slate-700"><input type="checkbox" name="is_top_selling" value="true" defaultChecked={editProduct?.is_top_selling ?? false}/> Feature in Top Sellers (admin only)</label>}
       <label className="flex items-center gap-3 text-sm font-semibold text-emerald-700"><input type="checkbox" name="giveaway" value="true" defaultChecked={editProduct?.giveaway ?? false}/> Announce this item as a giveaway</label>
       <input name="giveaway_announcement" defaultValue={editProduct?.giveaway_announcement || ''} placeholder="Optional giveaway announcement" className="w-full rounded-lg border px-3 py-2"/>

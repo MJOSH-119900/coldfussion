@@ -1,7 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { BannerSettings, Order, OwnerAbout, Product } from '../../(public)/components/types/store';
+import { BannerSettings, Order, OwnerAbout, Product, VendorAdminOverview } from '../../(public)/components/types/store';
 import ProductForm from './components/ProductForm';
 import {
     approveVendorRequestAction,
@@ -13,16 +13,23 @@ import {
     getMusicTracksAction,
     getOwnerAboutAction,
     getProductsAction,
+    getProductVendorContextAction,
     getVendorRequestsAction,
     getVendorsAction,
     deleteVendorAction,
+    revokeVendorProductAction,
     rejectVendorRequestAction,
     saveAdminWhatsAppAction,
+    getVendorApplicationSettingsAction,
+    saveVendorApplicationSettingsAction,
     updateVendorStatusAction,
     getSubAdminsAction,
     inviteSubAdminAction,
     revokeSubAdminAction,
     deleteSubAdminAction,
+    extendVendorAccessAction,
+    resendVendorSetupEmailAction,
+    generateVendorWhatsAppSetupLinkAction,
 } from './actions';
 import { logoutAction } from '../../actions/auth';
 import { useRouter } from 'next/navigation';
@@ -38,9 +45,14 @@ import BackupManager from './components/BackupManager';
 import AccountPasswordSecurity from '../../components/PasswordSecurity';
 import { useBranding } from '../../(public)/components/BrandingProvider';
 import VendorProductRequestsManager from './components/VendorProductRequestsManager';
+import VendorUpgradeRequestsManager from './components/VendorUpgradeRequestsManager';
+import { getProductSubcategories, isValidProductCategoryPair, normalizeSelectedProductSubcategory, OTHER_SUBCATEGORY_PREFIX, PRODUCT_MAIN_CATEGORIES } from '../../../lib/product-categories';
+import { DEFAULT_VENDOR_ONBOARDING_SETTINGS, type VendorOnboardingSettings } from '../../../lib/vendor-onboarding';
+
+const VENDOR_LIST_PAGE_SIZE = 20;
 const navGroups = [
     { label: 'Dashboard', items: ['Overview'] },
-    { label: 'Store management', items: ['Vendors', 'Products', 'Vendor Product Requests', 'Orders', 'Giveaways'] },
+    { label: 'Store management', items: ['Vendors', 'Vendor Add-ons', 'Products', 'Vendor Product Requests', 'Orders', 'Giveaways'] },
     { label: 'Insights', items: ['Analytics', 'Reports'] },
     { label: 'Storefront', items: ['Banners', 'Branding', 'About', 'Music', 'Upgrade notice'] },
     { label: 'Customer care', items: ['Inbox'] },
@@ -56,6 +68,10 @@ export default function DashboardPortal({ isSuperAdmin = false }: { isSuperAdmin
     const [inboxCount, setInboxCount] = useState(0);
     const [productsLoading, setProductsLoading] = useState(true);
     const [editingProduct, setEditingProduct] = useState<Product | undefined>();
+    const [productDetails, setProductDetails] = useState<Product | null>(null);
+    const [productVendorContext, setProductVendorContext] = useState<Awaited<ReturnType<typeof getProductVendorContextAction>> | null>(null);
+    const [productDetailsLoading, setProductDetailsLoading] = useState(false);
+    const [openProductMenuId, setOpenProductMenuId] = useState('');
     const [section, setSection] = useState('Products');
     const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
     const [query, setQuery] = useState('');
@@ -70,6 +86,21 @@ export default function DashboardPortal({ isSuperAdmin = false }: { isSuperAdmin
     const [subAdminEmail, setSubAdminEmail] = useState('');
     const [subAdminMessage, setSubAdminMessage] = useState('');
     const [subAdminBusy, setSubAdminBusy] = useState(false);
+    const [sectionRestored, setSectionRestored] = useState(false);
+    useEffect(() => {
+        try {
+            const savedSection = window.sessionStorage.getItem('admin-dashboard-section');
+            const availableSections = navGroups.flatMap(group => group.items).filter(item => item !== 'Sub-admins' || isSuperAdmin);
+            if (savedSection && availableSections.includes(savedSection)) setSection(savedSection);
+        } catch { /* Keep the default section when browser storage is unavailable. */ }
+        setSectionRestored(true);
+    }, [isSuperAdmin]);
+    useEffect(() => {
+        if (sectionRestored) {
+            try { window.sessionStorage.setItem('admin-dashboard-section', section); }
+            catch { /* Dashboard navigation still works without browser storage. */ }
+        }
+    }, [section, sectionRestored]);
     useEffect(() => { if (isSuperAdmin) void getSubAdminsAction().then(setSubAdmins).catch(error => setSubAdminMessage(error instanceof Error ? error.message : 'Could not load sub-admins.')); }, [isSuperAdmin]);
     const knownReceiptConfirmations = useRef<Set<string> | null>(null);
     useEffect(() => {
@@ -191,6 +222,20 @@ export default function DashboardPortal({ isSuperAdmin = false }: { isSuperAdmin
             }
         });
     };
+    const openProductDetails = async (product: Product) => {
+        setProductDetails(product);
+        setProductVendorContext(null);
+        setProductDetailsLoading(true);
+        setOpenProductMenuId('');
+        try {
+            const context = await getProductVendorContextAction(product.id);
+            setProductVendorContext(context);
+        } catch (error) {
+            notify('error', error instanceof Error ? error.message : 'Could not load the vendor context.', 'Product details');
+        } finally {
+            setProductDetailsLoading(false);
+        }
+    };
     const giveawayCount = filteredProducts.filter(p => p.giveaway).length;
     const totalAvailable = filteredProducts.reduce((sum, p) => sum + (p.available_quantity || 0), 0);
     const selectSection = (item: string) => {
@@ -250,6 +295,7 @@ export default function DashboardPortal({ isSuperAdmin = false }: { isSuperAdmin
             {section === 'Overview' && <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><Stat title="Products" value={filteredProducts.length}/><Stat title="Available units" value={totalAvailable}/><Stat title="Giveaways" value={giveawayCount}/><Stat title="Completed sales" value={marketplace?.completedSales || 0}/><Stat title="Revenue" value={marketplace?.revenue || 0}/></div>}
 
             {section === 'Vendors' && <VendorSection />}
+            {section === 'Vendor Add-ons' && <VendorUpgradeRequestsManager />}
             {section === 'Vendor Product Requests' && <VendorProductRequestsManager />}
             {section === 'Orders' && <OrdersSection />}
             {section === 'Analytics' && <AnalyticsSection products={allProducts}/>}
@@ -289,7 +335,7 @@ export default function DashboardPortal({ isSuperAdmin = false }: { isSuperAdmin
                 </div>
 
                 <div id="admin-products-list" className="overflow-x-auto" aria-busy={productsLoading}>
-                  <table className="w-full min-w-[900px] text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-400"><th className="px-3 py-3">Product</th><th className="px-3 py-3">Availability</th><th className="px-3 py-3">Price</th><th className="px-3 py-3">Flags</th><th className="px-3 py-3 text-right">Actions</th></tr></thead><tbody key={safePage} className="product-page-in">{productsLoading && paginatedProducts.length === 0 ? Array.from({length: 5}, (_, index) => <tr key={`loading-${index}`} aria-hidden="true" className="border-b border-slate-100"><td className="px-3 py-4"><div className="flex items-center gap-3"><div className="h-11 w-11 animate-pulse rounded-lg bg-slate-200"/><div className="space-y-2"><div className="h-3 w-36 animate-pulse rounded bg-slate-200"/><div className="h-2 w-24 animate-pulse rounded bg-slate-100"/></div></div></td><td className="px-3 py-4"><div className="h-3 w-24 animate-pulse rounded bg-slate-100"/></td><td className="px-3 py-4"><div className="h-3 w-20 animate-pulse rounded bg-slate-100"/></td><td className="px-3 py-4"><div className="h-5 w-16 animate-pulse rounded bg-slate-100"/></td><td className="px-3 py-4"><div className="ml-auto h-7 w-20 animate-pulse rounded bg-slate-100"/></td></tr>) : paginatedProducts.map(p => <tr key={p.id} className="border-b border-slate-100 transition-colors duration-200 hover:bg-slate-50"><td className="px-3 py-4"><div className="flex items-center gap-3"><img src={p.images?.[0]} alt="" loading="lazy" className="h-11 w-11 rounded-lg object-cover"/><div><p className="font-bold">{p.title}</p><p className="text-xs text-slate-400">{p.category} · ♥ {p.likes_count || 0} likes{p.size_prices?.length ? ` · ${p.size_prices.length} sizes` : ''}</p></div></div></td><td className="px-3 py-4"><span className={p.is_available ? 'text-emerald-600' : 'text-red-600'}>{p.is_available ? `${p.available_quantity || 0} available` : 'Unavailable'}</span></td><td className="px-3 py-4"><span className="font-black">₦{p.size_prices?.length ? `From ₦${Math.min(...p.size_prices.map(v => v.price)).toLocaleString()}` : `₦${p.price.toLocaleString()}`}</span>{p.compare_at_price && <span className="ml-2 text-xs text-slate-400 line-through">₦{p.compare_at_price.toLocaleString()}</span>}</td><td className="px-3 py-4"><div className="flex flex-wrap gap-1">{p.giveaway && <span className="rounded bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-700">Giveaway</span>}{p.is_latest && <span className="rounded bg-blue-100 px-2 py-1 text-[10px] font-bold text-blue-700">Latest</span>}{p.is_top_selling && <span className="rounded bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700">Top seller</span>}</div></td><td className="px-3 py-4"><div className="flex justify-end gap-2"><button onClick={() => setEditingProduct(p)} className="rounded-lg border px-3 py-1.5 text-xs font-bold hover:border-violet-400">Edit</button><button disabled={isPending} onClick={() => handleDelete(p.id)} className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Delete</button></div></td></tr>)}</tbody></table>
+                  <table className="w-full min-w-[900px] text-left text-sm"><thead><tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase text-slate-400"><th className="px-3 py-3">Product</th><th className="px-3 py-3">Availability</th><th className="px-3 py-3">Price</th><th className="px-3 py-3">Flags</th><th className="px-3 py-3 text-right">Actions</th></tr></thead><tbody key={safePage} className="product-page-in">{productsLoading && paginatedProducts.length === 0 ? Array.from({length: 5}, (_, index) => <tr key={`loading-${index}`} aria-hidden="true" className="border-b border-slate-100"><td className="px-3 py-4"><div className="flex items-center gap-3"><div className="h-11 w-11 animate-pulse rounded-lg bg-slate-200"/><div className="space-y-2"><div className="h-3 w-36 animate-pulse rounded bg-slate-200"/><div className="h-2 w-24 animate-pulse rounded bg-slate-100"/></div></div></td><td className="px-3 py-4"><div className="h-3 w-24 animate-pulse rounded bg-slate-100"/></td><td className="px-3 py-4"><div className="h-3 w-20 animate-pulse rounded bg-slate-100"/></td><td className="px-3 py-4"><div className="h-5 w-16 animate-pulse rounded bg-slate-100"/></td><td className="px-3 py-4"><div className="ml-auto h-7 w-20 animate-pulse rounded bg-slate-100"/></td></tr>) : paginatedProducts.map(p => <tr key={p.id} className="border-b border-slate-100 transition-colors duration-200 hover:bg-slate-50"><td className="px-3 py-4"><div className="flex items-center gap-3"><img src={p.images?.[0]} alt="" loading="lazy" className="h-11 w-11 rounded-lg object-cover"/><div><p className="font-bold">{p.title}</p><p className="text-xs text-slate-400">{p.category} · ♥ {p.likes_count || 0} likes{p.size_prices?.length ? ` · ${p.size_prices.length} sizes` : ''}</p></div></div></td><td className="px-3 py-4"><span className={p.is_available ? 'text-emerald-600' : 'text-red-600'}>{p.is_available ? `${p.available_quantity || 0} available` : 'Unavailable'}</span></td><td className="px-3 py-4"><span className="font-black">₦{p.size_prices?.length ? `From ₦${Math.min(...p.size_prices.map(v => v.price)).toLocaleString()}` : `₦${p.price.toLocaleString()}`}</span>{p.compare_at_price && <span className="ml-2 text-xs text-slate-400 line-through">₦{p.compare_at_price.toLocaleString()}</span>}</td><td className="px-3 py-4"><div className="flex flex-wrap gap-1">{p.giveaway && <span className="rounded bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-700">Giveaway</span>}{p.is_latest && <span className="rounded bg-blue-100 px-2 py-1 text-[10px] font-bold text-blue-700">Latest</span>}{p.is_top_selling && <span className="rounded bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700">Top seller</span>}</div></td><td className="px-3 py-4"><div className="relative flex justify-end"><button type="button" aria-label={`Open actions for ${p.title}`} aria-expanded={openProductMenuId === p.id} onClick={() => setOpenProductMenuId(current => current === p.id ? '' : p.id)} className="rounded-lg border px-2.5 py-1.5 text-lg font-black leading-none hover:border-violet-400">⋮</button>{openProductMenuId === p.id && <div className="absolute right-0 top-9 z-20 w-52 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"><button type="button" onClick={() => void openProductDetails(p)} className="w-full rounded-md px-3 py-2 text-left text-xs font-bold hover:bg-slate-50">View product and vendor details</button><button type="button" onClick={() => { setEditingProduct(p); setOpenProductMenuId(''); }} className="w-full rounded-md px-3 py-2 text-left text-xs font-bold hover:bg-slate-50">Edit product</button><button type="button" disabled={isPending} onClick={() => { setOpenProductMenuId(''); void handleDelete(p.id); }} className="w-full rounded-md px-3 py-2 text-left text-xs font-bold text-red-700 hover:bg-red-50 disabled:opacity-40">Delete product</button></div>}</div></td></tr>)}</tbody></table>
                   {paginatedProducts.length === 0 && <div className="px-6 py-16 text-center text-sm text-slate-500">No products match your search/filter.</div>}
                 </div>
 
@@ -306,21 +352,102 @@ export default function DashboardPortal({ isSuperAdmin = false }: { isSuperAdmin
           </div>
         </main>
       </div>
+      {productDetails && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4" role="dialog" aria-modal="true" aria-label="Product and vendor details">
+        <button type="button" aria-label="Close product details" onClick={() => setProductDetails(null)} className="absolute inset-0 cursor-default"/>
+        <section className="relative max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-5 shadow-2xl sm:p-6">
+          <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4"><div><p className="text-xs font-bold uppercase tracking-[.16em] text-violet-600">Product details</p><h2 className="mt-1 text-2xl font-black text-slate-950">{productDetails.title}</h2><p className="mt-1 font-mono text-xs text-slate-500">{productDetails.id}</p></div><button type="button" onClick={() => setProductDetails(null)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold hover:border-violet-400">Close</button></div>
+          <div className="mt-5 grid gap-5 md:grid-cols-[180px_minmax(0,1fr)]"><img src={productDetails.images?.[0]} alt="" className="h-44 w-full rounded-xl bg-slate-100 object-cover"/><div className="grid gap-3 text-sm sm:grid-cols-2"><p><span className="font-semibold">Category:</span> {productDetails.category} / {productDetails.subcategory || '—'}</p><p><span className="font-semibold">Price:</span> ₦{productDetails.price.toLocaleString()}</p><p><span className="font-semibold">Availability:</span> {productDetails.is_available ? `${productDetails.available_quantity || 0} available` : 'Unavailable'}</p><p><span className="font-semibold">Condition:</span> {productDetails.condition || 'Not specified'}</p><p className="sm:col-span-2"><span className="font-semibold">Description:</span> {productDetails.description || '—'}</p></div></div>
+          <div className="mt-6 border-t border-slate-100 pt-5"><h3 className="text-lg font-black text-slate-950">Vendor and catalog</h3>{productDetailsLoading && <p className="mt-3 text-sm text-slate-500">Loading vendor details…</p>}{!productDetailsLoading && productVendorContext?.success && <><div className="mt-3 rounded-xl bg-violet-50 p-4 text-sm"><p className="font-bold text-violet-950">{productVendorContext.vendor?.business_name || 'Vendor profile unavailable'}</p>{productVendorContext.vendor && <p className="mt-1 text-slate-700">{productVendorContext.vendor.vendor_id} · {productVendorContext.vendor.owner_name || 'No owner name'} · {productVendorContext.vendor.email || 'No email'} · {productVendorContext.vendor.status || 'No status'}</p>}</div><div className="mt-4 divide-y divide-slate-100 rounded-xl border border-slate-200">{productVendorContext.products.map(item => <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-3"><div className="min-w-0"><p className="truncate font-semibold text-slate-900">{item.title}</p><p className="text-xs text-slate-500">{item.category} / {item.subcategory || '—'} · ₦{item.price.toLocaleString()}</p></div><span className={`rounded-full px-2.5 py-1 text-xs font-bold ${item.is_available ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-700'}`}>{item.is_available ? `${item.available_quantity || 0} available` : 'Unavailable'}</span></div>)}{!productVendorContext.products.length && <p className="p-4 text-sm text-slate-500">This vendor has no catalog products.</p>}</div></>}{!productDetailsLoading && productVendorContext && !productVendorContext.success && <p className="mt-3 text-sm text-red-700">{productVendorContext.error}</p>}</div>
+        </section>
+      </div>}
     </div>);
 }
+type VendorApplicationSummary = {
+    request_id: string;
+    status: string;
+    business_name?: string;
+    owner_name?: string;
+    email?: string;
+    whatsapp_number?: string;
+    product_main_category?: string;
+    product_subcategory?: string;
+    requested_brand?: string;
+    business_address?: string;
+    created_at?: string;
+    business_description?: string;
+    logo?: string;
+    username?: string;
+    verification_doc_type?: string;
+    verification_document_url?: string;
+    payment_receipt_url?: string;
+    payment_required?: boolean;
+    payment_amount?: number;
+    payment_instructions?: string;
+    payment_status?: string;
+    review_due_at?: string;
+    access_days?: number;
+};
+
 function VendorSection() {
     const { brand } = useBranding();
     const { notify } = useToast();
-    const [requests, setRequests] = useState<any[]>([]);
-    const [vendors, setVendors] = useState<any[]>([]);
+    const [requests, setRequests] = useState<VendorApplicationSummary[]>([]);
+    const [vendors, setVendors] = useState<VendorAdminOverview[]>([]);
     const [applicationId, setApplicationId] = useState('');
     const [working, setWorking] = useState(false);
     const [message, setMessage] = useState('');
+    const [approvalMainCategory, setApprovalMainCategory] = useState('');
+    const [approvalSubcategory, setApprovalSubcategory] = useState('');
+    const [approvalCustomSubcategory, setApprovalCustomSubcategory] = useState('');
+    const [approvalBrand, setApprovalBrand] = useState('');
     const [adminWhatsApp, setAdminWhatsApp] = useState('');
     const [savingWhatsApp, setSavingWhatsApp] = useState(false);
     const [whatsAppMessage, setWhatsAppMessage] = useState('');
-    const reload = () => Promise.all([getVendorRequestsAction(), getVendorsAction(), getAdminWhatsAppAction()]).then(([r, v, phone]) => { setRequests(r); setVendors(v); setAdminWhatsApp(phone); });
-    useEffect(() => { reload(); }, []);
+    const [onboardingSettings, setOnboardingSettings] = useState<VendorOnboardingSettings>(DEFAULT_VENDOR_ONBOARDING_SETTINGS);
+    const [savingOnboardingSettings, setSavingOnboardingSettings] = useState(false);
+    const [onboardingSettingsMessage, setOnboardingSettingsMessage] = useState('');
+    const [approvalAccessDays, setApprovalAccessDays] = useState('');
+    const [paymentAuthorized, setPaymentAuthorized] = useState(false);
+    const [resendingRequestId, setResendingRequestId] = useState('');
+    const [generatingSetupLinkRequestId, setGeneratingSetupLinkRequestId] = useState('');
+    const [oneTimeSetupLink, setOneTimeSetupLink] = useState('');
+    const [setupLinkWhatsappUrl, setSetupLinkWhatsappUrl] = useState('');
+    const [applicationQuery, setApplicationQuery] = useState('');
+    const [applicationPage, setApplicationPage] = useState(1);
+    const [expandedApplicationId, setExpandedApplicationId] = useState('');
+    const [vendorQuery, setVendorQuery] = useState('');
+    const [vendorPage, setVendorPage] = useState(1);
+    const [expandedVendorId, setExpandedVendorId] = useState('');
+    const [revocationTarget, setRevocationTarget] = useState<{ vendorId: string; productId: string } | null>(null);
+    const [revocationReason, setRevocationReason] = useState('');
+    const [revoking, setRevoking] = useState(false);
+    const reload = useCallback(() => Promise.all([getVendorRequestsAction(), getVendorsAction(), getAdminWhatsAppAction(), getVendorApplicationSettingsAction()]).then(([r, v, phone, settings]) => { setRequests(r); setVendors(v); setAdminWhatsApp(phone); setOnboardingSettings(settings); }), []);
+    useEffect(() => {
+        void reload().catch(error => console.error('Could not load vendor applications:', error));
+        const interval = window.setInterval(() => {
+            void reload().catch(error => console.error('Could not refresh vendor applications:', error));
+        }, 15000);
+        return () => window.clearInterval(interval);
+    }, [reload]);
+    const approvalSubcategories = getProductSubcategories(approvalMainCategory);
+    const normalizedApprovalSubcategory = normalizeSelectedProductSubcategory(approvalSubcategory, approvalCustomSubcategory) ||
+        (approvalSubcategory === 'Other' && !approvalCustomSubcategory.trim() ? 'Other' : '');
+    const selectApplication = (request: VendorApplicationSummary) => {
+        setOneTimeSetupLink('');
+        setSetupLinkWhatsappUrl('');
+        const requestedSubcategory = String(request.product_subcategory || 'Other');
+        const custom = requestedSubcategory.startsWith(OTHER_SUBCATEGORY_PREFIX)
+            ? requestedSubcategory.slice(OTHER_SUBCATEGORY_PREFIX.length)
+            : '';
+        setApplicationId(request.request_id);
+        setApprovalMainCategory(String(request.product_main_category || 'Other Categories'));
+        setApprovalSubcategory(custom ? 'Other' : requestedSubcategory);
+        setApprovalCustomSubcategory(custom);
+        setApprovalBrand(request.requested_brand || 'Unbranded');
+        setApprovalAccessDays(String(onboardingSettings.default_access_days || ''));
+        setPaymentAuthorized(request.payment_status === 'not_required');
+        setMessage('');
+    };
     const saveWhatsApp = async () => {
         setSavingWhatsApp(true); setWhatsAppMessage('');
         try {
@@ -330,11 +457,144 @@ function VendorSection() {
             setWhatsAppMessage(result.phone ? 'Admin WhatsApp number saved. New vendor applications will open a pre-filled WhatsApp message to this number.' : 'Admin WhatsApp number cleared. Applications will still be saved for review.');
         } finally { setSavingWhatsApp(false); }
     };
-    const decide = async (action: 'approve' | 'reject') => { setWorking(true); setMessage(''); const id = applicationId.trim(); const result = action === 'approve' ? await approveVendorRequestAction(id) : await rejectVendorRequestAction(id); setWorking(false); if (!result.success) {
-        setMessage(result.error || 'Unable to process this application.');
-        return;
-    } setMessage(action === 'approve' ? `Application approved. Vendor ID: ${'vendor' in result ? (result.vendor as { vendor_id: string }).vendor_id : 'created'}` : 'Application rejected.'); setApplicationId(''); await reload(); };
+    const saveOnboarding = async () => {
+        setSavingOnboardingSettings(true);
+        setOnboardingSettingsMessage('');
+        try {
+            const result = await saveVendorApplicationSettingsAction(onboardingSettings);
+            if (!result.success) {
+                setOnboardingSettingsMessage(result.error || 'Could not save vendor application settings.');
+                return;
+            }
+            setOnboardingSettings(result.settings || onboardingSettings);
+            setOnboardingSettingsMessage('Vendor payment and access settings saved.');
+        } catch (error) {
+            setOnboardingSettingsMessage(error instanceof Error ? error.message : 'Could not save vendor application settings.');
+        } finally {
+            setSavingOnboardingSettings(false);
+        }
+    };
+    const decide = async (action: 'approve' | 'reject') => {
+        setWorking(true);
+        setMessage('');
+        try {
+            const id = applicationId.trim();
+            if (action === 'approve' && (!normalizedApprovalSubcategory || !isValidProductCategoryPair(approvalMainCategory, normalizedApprovalSubcategory))) {
+                setMessage('Choose a valid approved main category and subcategory.');
+                return;
+            }
+            const result = action === 'approve'
+                ? await approveVendorRequestAction(id, approvalMainCategory, normalizedApprovalSubcategory || undefined, Number(approvalAccessDays), paymentAuthorized, approvalBrand)
+                : await rejectVendorRequestAction(id);
+            if (!result.success) {
+                setMessage(result.error || 'Unable to process this application.');
+                return;
+            }
+            const approvedVendorId = 'vendor' in result &&
+                typeof result.vendor === 'object' &&
+                result.vendor !== null &&
+                'vendor_id' in result.vendor &&
+                typeof result.vendor.vendor_id === 'string'
+                ? result.vendor.vendor_id
+                : 'created';
+            setMessage(action === 'approve' ? `Application approved. Vendor ID: ${approvedVendorId}` : 'Application rejected.');
+            setApplicationId('');
+            setApprovalMainCategory('');
+            setApprovalSubcategory('');
+            setApprovalCustomSubcategory('');
+            setApprovalBrand('');
+            await reload();
+        } catch (error) {
+            setMessage(error instanceof Error ? error.message : 'Unable to process this application.');
+        } finally {
+            setWorking(false);
+        }
+    };
+    const resendSetupEmail = async (request: VendorApplicationSummary) => {
+        setResendingRequestId(request.request_id);
+        try {
+            const result = await resendVendorSetupEmailAction(request.request_id);
+            if (!result.success) {
+                notify('error', result.error || 'Could not resend the setup email.', 'Setup email');
+                return;
+            }
+            notify('success', `A new seller setup link was sent to ${request.email}.`, 'Setup email sent');
+        } catch (error) {
+            notify('error', error instanceof Error ? error.message : 'Could not resend the setup email.', 'Setup email');
+        } finally {
+            setResendingRequestId('');
+        }
+    };
+    const generateWhatsAppSetupLink = async (request: VendorApplicationSummary) => {
+        setGeneratingSetupLinkRequestId(request.request_id);
+        setOneTimeSetupLink('');
+        setSetupLinkWhatsappUrl('');
+        try {
+            const result = await generateVendorWhatsAppSetupLinkAction(request.request_id);
+            if (!result.success) {
+                notify('error', result.error || 'Could not generate a one-time setup link.', 'Setup link');
+                return;
+            }
+            setOneTimeSetupLink(result.setupLink);
+            const phone = String(request.whatsapp_number || '').replace(/\D/g, '');
+            if (phone.length >= 10) {
+                const message = [
+                    `Hello ${request.owner_name || request.username || 'there'},`,
+                    `The admin has authorized a one-time account setup link for your ${brand.companyName} vendor application (${request.request_id}).`,
+                    'Open this secure link to set your account password. It can only be used once:',
+                    result.setupLink,
+                    'Please do not forward this link.',
+                ].join('\n\n');
+                setSetupLinkWhatsappUrl(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`);
+            }
+            notify('success', 'One-time link generated. Share it privately with the applicant.', 'Setup link ready');
+        } catch (error) {
+            notify('error', error instanceof Error ? error.message : 'Could not generate a one-time setup link.', 'Setup link');
+        } finally {
+            setGeneratingSetupLinkRequestId('');
+        }
+    };
+    const copyOneTimeSetupLink = async () => {
+        try {
+            await navigator.clipboard.writeText(oneTimeSetupLink);
+            notify('success', 'The one-time setup link was copied.', 'Link copied');
+        } catch {
+            notify('error', 'Clipboard access is unavailable. Select and copy the link from the field.', 'Could not copy link');
+        }
+    };
+    const revokeProduct = async (vendor: VendorAdminOverview, productId: string) => {
+        if (!revocationReason.trim()) {
+            notify('error', 'Add a reason before revoking this product.', 'Reason required');
+            return;
+        }
+        setRevoking(true);
+        try {
+            const result = await revokeVendorProductAction(productId, revocationReason);
+            if (!result.success) throw new Error(result.error || 'Could not revoke this product.');
+            notify('success', `${vendor.business_name} was notified and the product was removed.`, 'Product revoked');
+            setRevocationTarget(null);
+            setRevocationReason('');
+            await reload();
+        } catch (error) {
+            notify('error', error instanceof Error ? error.message : 'Could not revoke this product.', 'Revocation failed');
+        } finally {
+            setRevoking(false);
+        }
+    };
     const pending = requests.filter(r => r.status === 'pending');
+    const normalizedApplicationQuery = applicationQuery.trim().toLowerCase();
+    const filteredPending = pending.filter(request => [request.request_id, request.business_name, request.owner_name, request.email, request.whatsapp_number]
+        .some(value => String(value || '').toLowerCase().includes(normalizedApplicationQuery)));
+    const applicationPageCount = Math.max(1, Math.ceil(filteredPending.length / VENDOR_LIST_PAGE_SIZE));
+    const currentApplicationPage = Math.min(applicationPage, applicationPageCount);
+    const visiblePending = filteredPending.slice((currentApplicationPage - 1) * VENDOR_LIST_PAGE_SIZE, currentApplicationPage * VENDOR_LIST_PAGE_SIZE);
+    const normalizedVendorQuery = vendorQuery.trim().toLowerCase();
+    const filteredVendors = vendors.filter(vendor => [vendor.vendor_id, vendor.business_name, vendor.username, vendor.email, vendor.status]
+        .some(value => String(value || '').toLowerCase().includes(normalizedVendorQuery)));
+    const vendorPageCount = Math.max(1, Math.ceil(filteredVendors.length / VENDOR_LIST_PAGE_SIZE));
+    const currentVendorPage = Math.min(vendorPage, vendorPageCount);
+    const visibleVendors = filteredVendors.slice((currentVendorPage - 1) * VENDOR_LIST_PAGE_SIZE, currentVendorPage * VENDOR_LIST_PAGE_SIZE);
+    const selectedApplication = requests.find(request => request.request_id.toUpperCase() === applicationId.trim().toUpperCase());
     return <div className="space-y-4">
     <div className="rounded-2xl border border-emerald-200 bg-white p-6 shadow-sm">
       <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-xl font-black">Vendor verification WhatsApp</h2><p className="mt-1 max-w-2xl text-sm text-slate-500">Set the official {brand.companyName} admin WhatsApp number. After registration, vendors will be offered a pre-filled message containing their application details so you can verify them before approving or rejecting the application.</p></div><span className={`rounded-full px-3 py-1 text-xs font-bold ${adminWhatsApp ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'}`}>{adminWhatsApp ? 'Configured' : 'Not configured'}</span></div>
@@ -342,11 +602,125 @@ function VendorSection() {
       {whatsAppMessage && <p role="status" className="mt-3 text-sm font-semibold text-slate-700">{whatsAppMessage}</p>}
     </div>
     <div className="rounded-2xl border border-slate-200 bg-white p-6">
-      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-black">Vendor applications</h2><p className="mt-1 text-sm text-slate-500">Review the saved application details, then approve or reject each applicant.</p></div><Link href="/vendor/register" className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white">Registration page</Link></div>
-      <div className="mt-5 rounded-xl border border-violet-100 bg-violet-50 p-4"><label className="block text-sm font-bold text-slate-800">Vendor application / registration ID<input value={applicationId} onChange={e => setApplicationId(e.target.value.toUpperCase())} placeholder="e.g. VREQ0001" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-mono text-sm outline-none focus:border-violet-500"/></label><div className="mt-3 flex flex-wrap gap-2"><button disabled={working || !applicationId.trim()} onClick={() => decide('approve')} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{working ? 'Processing…' : 'Approve application'}</button><button disabled={working || !applicationId.trim()} onClick={() => decide('reject')} className="rounded-lg border border-red-200 px-4 py-2 text-xs font-bold text-red-600 disabled:opacity-50">Reject application</button></div>{message && <p className="mt-3 text-sm font-semibold text-slate-700">{message}</p>}</div>
-      <div className="mt-5 space-y-3">{pending.map(r => <div key={r.request_id} className="rounded-xl border p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-bold">{r.business_name}</p><span className="rounded-lg bg-slate-100 px-2 py-1 font-mono text-xs font-bold">{r.request_id}</span></div><p className="mt-1 text-sm text-slate-500">{r.owner_name} · {r.email} · {r.whatsapp_number}</p><div className="mt-3 grid gap-2 text-sm sm:grid-cols-2"><p><span className="font-semibold text-slate-700">First product category:</span> {r.product_main_category || 'Other Categories'} / {r.product_subcategory || 'Other'}</p><p><span className="font-semibold text-slate-700">Address:</span> {r.business_address || '—'}</p><p><span className="font-semibold text-slate-700">Submitted:</span> {r.created_at ? new Date(r.created_at).toLocaleString() : '—'}</p><p><span className="font-semibold text-slate-700">Status:</span> <span className="font-semibold text-amber-700">Pending verification</span></p></div><p className="mt-2 text-sm leading-6">{r.business_description}</p>{r.logo && <a href={r.logo} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs font-bold text-violet-700">View business logo ↗</a>}<button onClick={() => setApplicationId(r.request_id)} className="mt-3 rounded-lg border px-3 py-2 text-xs font-bold hover:border-violet-400">Select for approval / rejection</button></div>)}{!pending.length && <p className="py-8 text-center text-sm text-slate-500">No pending vendor applications.</p>}</div>
+      <h2 className="text-xl font-black">Vendor payment and trial access</h2>
+      <p className="mt-1 text-sm text-slate-500">To collect the ₦1,000 base monthly subscription at registration, enable payment, set the amount to ₦1,000, enter the transfer details, and use 30 access days. You can still verify each receipt and assign access days during approval.</p>
+      <label className="mt-4 flex items-center gap-3 text-sm font-bold text-slate-800"><input type="checkbox" checked={onboardingSettings.payment_enabled} onChange={event => setOnboardingSettings(current => ({ ...current, payment_enabled: event.target.checked }))}/>Require payment receipt with new applications</label>
+      {onboardingSettings.payment_enabled && <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <label className="text-sm font-semibold text-slate-700">Application payment (₦)<input type="number" min="1" step="1" value={onboardingSettings.payment_amount || ''} onChange={event => setOnboardingSettings(current => ({ ...current, payment_amount: Number(event.target.value) || 0 }))} className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3"/></label>
+        <label className="text-sm font-semibold text-slate-700 sm:col-span-2">Payment destination and instructions<textarea rows={3} maxLength={2000} value={onboardingSettings.payment_instructions} onChange={event => setOnboardingSettings(current => ({ ...current, payment_instructions: event.target.value }))} placeholder="Bank/payment details and reference instructions" className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3"/></label>
+      </div>}
+      <label className="mt-4 block max-w-xs text-sm font-semibold text-slate-700">Default access days (optional)<input type="number" min="0" max="3650" step="1" value={onboardingSettings.default_access_days || ''} onChange={event => setOnboardingSettings(current => ({ ...current, default_access_days: Number(event.target.value) || 0 }))} placeholder="Set per applicant if blank" className="mt-1 w-full rounded-xl border border-slate-200 px-4 py-3"/></label>
+      <button type="button" disabled={savingOnboardingSettings} onClick={() => void saveOnboarding()} className="mt-4 rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white disabled:opacity-50">{savingOnboardingSettings ? 'Saving…' : 'Save payment settings'}</button>
+      {onboardingSettingsMessage && <p role="status" className="mt-3 text-sm font-semibold text-slate-700">{onboardingSettingsMessage}</p>}
     </div>
-      <div className="rounded-2xl border border-slate-200 bg-white p-6"><h2 className="text-xl font-black">Approved vendors</h2><div className="mt-4 space-y-2">{vendors.map(v => <div key={v.vendor_id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border p-3"><div><p className="font-bold">{v.business_name}</p><p className="text-xs text-slate-500">{v.vendor_id} · {v.email} · {v.status}</p></div><div className="flex gap-2"><button onClick={async () => { const next = v.status === 'suspended' ? 'active' : 'suspended'; const x = await updateVendorStatusAction(v.vendor_id, next); if (x.success) reload(); else notify('error', x.error || 'Could not update vendor status.', 'Vendor update failed'); }} className="rounded-lg border px-3 py-2 text-xs font-bold">{v.status === 'suspended' ? 'Reactivate' : 'Suspend'}</button><button onClick={async () => { if (!window.confirm(`Permanently delete ${v.business_name} and its vendor account? Their products will also be removed; existing orders stay for records.`)) return; const result = await deleteVendorAction(v.vendor_id); if (!result.success) { notify('error', result.error || 'Could not delete vendor.', 'Vendor deletion failed'); return; } notify('success', `${v.business_name} and its vendor account were deleted.`, 'Vendor deleted'); await reload(); }} className="rounded-lg border border-red-200 px-3 py-2 text-xs font-bold text-red-700 hover:bg-red-50">Delete</button></div></div>)}{!vendors.length && <p className="text-sm text-slate-500">No vendors approved yet.</p>}</div></div>
+    <div className="rounded-2xl border border-slate-200 bg-white p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-black">Vendor applications</h2><p className="mt-1 text-sm text-slate-500">Review the saved application details, then approve or reject each applicant.</p></div><Link href="/vendor/register" className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white">Registration page</Link></div>
+      <div className="mt-5 rounded-xl border border-violet-100 bg-violet-50 p-4">
+        <label className="block text-sm font-bold text-slate-800">Vendor application / registration ID<input value={applicationId} onChange={e => { setApplicationId(e.target.value.toUpperCase()); setApprovalMainCategory(''); setApprovalSubcategory(''); setApprovalCustomSubcategory(''); }} placeholder="e.g. VREQ0001" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 font-mono text-sm outline-none focus:border-violet-500"/></label>
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <label className="text-sm font-bold text-slate-800">Approved first-product main category
+            <select required value={approvalMainCategory} onChange={event => { setApprovalMainCategory(event.target.value); setApprovalSubcategory(''); setApprovalCustomSubcategory(''); }} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3">
+              <option value="" disabled>Select a main category</option>
+              {PRODUCT_MAIN_CATEGORIES.map(value => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          <label className="text-sm font-bold text-slate-800">Approved first-product subcategory
+            <select required value={approvalSubcategory} onChange={event => { setApprovalSubcategory(event.target.value); setApprovalCustomSubcategory(''); }} disabled={!approvalMainCategory} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 disabled:cursor-not-allowed disabled:opacity-60">
+              <option value="" disabled>Select a subcategory</option>
+              {approvalSubcategories.map(value => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </label>
+          {approvalSubcategory === 'Other' && <label className="text-sm font-bold text-slate-800 sm:col-span-2">Specify the approved subcategory
+            <input required maxLength={100} value={approvalCustomSubcategory} onChange={event => setApprovalCustomSubcategory(event.target.value)} placeholder="For example, handmade baskets" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3"/>
+          </label>}
+        </div>
+        <p className="mt-2 text-xs text-slate-600">This category pair becomes the vendor’s initial product permission. You can adjust it before approval.</p>
+        <div className="mt-3 flex flex-wrap gap-2"><button disabled={working || !applicationId.trim()} onClick={() => decide('approve')} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50">{working ? 'Processing…' : 'Approve application'}</button><button disabled={working || !applicationId.trim()} onClick={() => decide('reject')} className="rounded-lg border border-red-200 px-4 py-2 text-xs font-bold text-red-600 disabled:opacity-50">Reject application</button></div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <label className="text-sm font-bold text-slate-800">Access days (trial or paid period)
+            <input required type="number" min="1" max="3650" step="1" value={approvalAccessDays} onChange={event => setApprovalAccessDays(event.target.value)} placeholder="Enter number of days" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3"/>
+          </label>
+          <label className="text-sm font-bold text-slate-800">Base plan brand
+            <input required maxLength={80} value={approvalBrand} onChange={event => setApprovalBrand(event.target.value)} placeholder="Brand name or Unbranded" className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3"/>
+          </label>
+          {selectedApplication?.payment_required && <label className="flex items-center gap-3 self-end rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-bold text-amber-950">
+            <input type="checkbox" checked={paymentAuthorized} onChange={event => setPaymentAuthorized(event.target.checked)}/>
+            Receipt/payment verified and authorized
+          </label>}
+        </div>
+        {selectedApplication?.payment_required && <p className="mt-3 text-sm text-slate-600">Application payment: ₦{Number(selectedApplication.payment_amount || 0).toLocaleString()} · {selectedApplication.payment_instructions}</p>}
+        {selectedApplication && <div className="mt-3 rounded-xl border border-slate-200 bg-white p-4 text-sm">
+          <p className="font-bold">Applicant: {selectedApplication.username || 'No username'} · Verification: {selectedApplication.verification_doc_type || 'Not provided'}</p>
+          <div className="mt-2 flex flex-wrap gap-4">
+            {selectedApplication.verification_document_url && <a href={selectedApplication.verification_document_url} target="_blank" rel="noopener noreferrer" className="font-bold text-violet-700">View CAC / NIN document ↗</a>}
+            {selectedApplication.payment_receipt_url && <a href={selectedApplication.payment_receipt_url} target="_blank" rel="noopener noreferrer" className="font-bold text-violet-700">View payment receipt ↗</a>}
+          </div>
+          <button type="button" disabled={resendingRequestId === selectedApplication.request_id} onClick={() => void resendSetupEmail(selectedApplication)} className="mt-3 rounded-lg border border-emerald-200 px-3 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50">{resendingRequestId === selectedApplication.request_id ? 'Sending…' : 'Resend setup email'}</button>
+          <button type="button" disabled={generatingSetupLinkRequestId === selectedApplication.request_id} onClick={() => void generateWhatsAppSetupLink(selectedApplication)} className="ml-2 mt-3 rounded-lg border border-green-200 px-3 py-2 text-xs font-bold text-green-800 hover:bg-green-50 disabled:opacity-50">{generatingSetupLinkRequestId === selectedApplication.request_id ? 'Generating…' : 'Generate one-time WhatsApp setup link'}</button>
+          <p className="mt-2 text-xs text-slate-500">Use this admin-authorized alternative if email delivery is blocked. The vendor can set a password while the application is pending; dashboard access remains unavailable until you approve them.</p>
+          {oneTimeSetupLink && <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+            <p className="font-bold text-amber-950">One-time account setup link</p>
+            <p className="mt-1 text-xs leading-5 text-amber-900">Share this privately with the applicant. It expires in 30 minutes and is consumed only when they submit the password form, so WhatsApp link previews won’t use it. Generating another link invalidates this one.</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <input aria-label="One-time vendor setup link" readOnly value={oneTimeSetupLink} className="min-w-0 flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs"/>
+              <button type="button" onClick={() => void copyOneTimeSetupLink()} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-bold text-white">Copy link</button>
+              {setupLinkWhatsappUrl && <a href={setupLinkWhatsappUrl} target="_blank" rel="noopener noreferrer" className="rounded-lg bg-green-700 px-3 py-2 text-xs font-bold text-white">Open vendor WhatsApp</a>}
+            </div>
+            {!setupLinkWhatsappUrl && <p className="mt-2 text-xs text-amber-900">No valid WhatsApp number was saved, so copy the link and send it through a verified private channel.</p>}
+          </div>}
+          {selectedApplication.review_due_at && <p className="mt-2 text-xs text-slate-500">Review target: {new Date(selectedApplication.review_due_at).toLocaleString()}</p>}
+        </div>}
+        {message && <p role="status" className="mt-3 text-sm font-semibold text-slate-700">{message}</p>}
+      </div>
+      <div className="mt-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3">
+          <label className="w-full max-w-md text-sm font-semibold text-slate-700">Search applications
+            <input value={applicationQuery} onChange={event => { setApplicationQuery(event.target.value); setApplicationPage(1); }} placeholder="Business, owner, email, phone, or application ID" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"/>
+          </label>
+          <p className="text-sm text-slate-500">{filteredPending.length} pending application{filteredPending.length === 1 ? '' : 's'}</p>
+        </div>
+        <div className="divide-y divide-slate-100">
+          {visiblePending.map(request => {
+            const expanded = expandedApplicationId === request.request_id;
+            return <article key={request.request_id} className="py-3">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto] sm:items-center">
+                <div className="min-w-0"><p className="truncate font-bold text-slate-900">{request.business_name || 'Unnamed business'}</p><p className="truncate text-xs text-slate-500">{request.owner_name || 'No owner name'} · {request.email || 'No email'}</p></div>
+                <div className="text-xs text-slate-500"><p className="font-mono font-semibold text-slate-700">{request.request_id}</p><p>Submitted {request.created_at ? new Date(request.created_at).toLocaleDateString() : '—'}</p></div>
+                <div className="flex flex-wrap gap-2 sm:justify-end"><button type="button" onClick={() => setExpandedApplicationId(expanded ? '' : request.request_id)} className="rounded-lg border px-3 py-2 text-xs font-bold hover:border-violet-400">{expanded ? 'Hide details' : 'View details'}</button><button type="button" onClick={() => selectApplication(request)} className="rounded-lg border border-violet-200 px-3 py-2 text-xs font-bold text-violet-800 hover:bg-violet-50">Review</button></div>
+              </div>
+              {expanded && <div className="mt-3 grid gap-2 rounded-lg bg-slate-50 p-3 text-sm text-slate-700 sm:grid-cols-2"><p><span className="font-semibold">Phone:</span> {request.whatsapp_number || '—'}</p><p><span className="font-semibold">Category:</span> {request.product_main_category || 'Other Categories'} / {request.product_subcategory || 'Other'}</p><p className="sm:col-span-2"><span className="font-semibold">Address:</span> {request.business_address || '—'}</p><p className="sm:col-span-2"><span className="font-semibold">Description:</span> {request.business_description || '—'}</p></div>}
+            </article>;
+          })}
+          {!visiblePending.length && <p className="py-8 text-center text-sm text-slate-500">No pending vendor applications match this search.</p>}
+        </div>
+        {filteredPending.length > VENDOR_LIST_PAGE_SIZE && <div className="mt-4 flex items-center justify-between gap-3"><p className="text-xs text-slate-500">Page {currentApplicationPage} of {applicationPageCount}</p><div className="flex gap-2"><button type="button" disabled={currentApplicationPage === 1} onClick={() => setApplicationPage(currentApplicationPage - 1)} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Previous</button><button type="button" disabled={currentApplicationPage === applicationPageCount} onClick={() => setApplicationPage(currentApplicationPage + 1)} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Next</button></div></div>}
+      </div>
+    </div>
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-3"><div><h2 className="text-xl font-black">Approved vendors</h2><p className="mt-1 text-sm text-slate-500">Expand a vendor only when you need its access or product audit details.</p></div><p className="text-sm text-slate-500">{filteredVendors.length} vendor{filteredVendors.length === 1 ? '' : 's'}</p></div>
+        <label className="mt-4 block max-w-md text-sm font-semibold text-slate-700">Search vendors
+          <input value={vendorQuery} onChange={event => { setVendorQuery(event.target.value); setVendorPage(1); }} placeholder="Business, username, email, vendor ID, or status" className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"/>
+        </label>
+        <div className="mt-3 divide-y divide-slate-100">
+          {visibleVendors.map(vendor => {
+            const expanded = expandedVendorId === vendor.vendor_id;
+            return <article key={vendor.vendor_id} className="py-3">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto] sm:items-center">
+                <div className="min-w-0"><p className="truncate font-bold text-slate-900">{vendor.business_name}</p><p className="truncate text-xs text-slate-500">{vendor.vendor_id} · {vendor.email}</p></div>
+                <div className="flex items-center gap-2 text-xs"><span className={`rounded-full px-2 py-1 font-bold ${vendor.status === 'active' || vendor.status === 'approved' ? 'bg-emerald-100 text-emerald-800' : vendor.status === 'expired' ? 'bg-amber-100 text-amber-800' : 'bg-slate-100 text-slate-700'}`}>{vendor.status}</span><span className="text-slate-500">{vendor.products.length} product{vendor.products.length === 1 ? '' : 's'}</span></div>
+                <div className="flex flex-wrap gap-2 sm:justify-end"><button type="button" onClick={() => setExpandedVendorId(expanded ? '' : vendor.vendor_id)} className="rounded-lg border px-3 py-2 text-xs font-bold hover:border-violet-400">{expanded ? 'Hide details' : 'View details'}</button><button type="button" onClick={async () => { const next = vendor.status === 'suspended' ? 'active' : 'suspended'; const result = await updateVendorStatusAction(vendor.vendor_id, next); if (result.success) await reload(); else notify('error', result.error || 'Could not update vendor status.', 'Vendor update failed'); }} className="rounded-lg border px-3 py-2 text-xs font-bold">{vendor.status === 'suspended' ? 'Reactivate' : 'Suspend'}</button></div>
+              </div>
+              {expanded && <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-violet-900">Approved category: {vendor.approved_main_category || 'Not set'} / {vendor.approved_subcategory || 'Not set'}</p><button type="button" onClick={async () => { if (!window.confirm(`Permanently delete ${vendor.business_name} and its vendor account? Their products will also be removed; existing orders stay for records.`)) return; const result = await deleteVendorAction(vendor.vendor_id); if (!result.success) { notify('error', result.error || 'Could not delete vendor.', 'Vendor deletion failed'); return; } notify('success', `${vendor.business_name} and its vendor account were deleted.`, 'Vendor deleted'); await reload(); }} className="rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-50">Delete vendor</button></div>
+                {vendor.access_expires_at && <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-sm"><span>{vendor.status === 'expired' ? 'Access expired' : 'Access expires'} · {new Date(vendor.access_expires_at).toLocaleString()}</span><button type="button" onClick={async () => { const value = window.prompt('How many access days should be added?', '30'); if (value === null) return; const result = await extendVendorAccessAction(vendor.vendor_id, Number(value)); if (!result.success) { notify('error', result.error || 'Could not extend vendor access.', 'Access update failed'); return; } notify('success', `Added ${value} access days for ${vendor.business_name}.`, 'Access extended'); await reload(); }} className="rounded-lg border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-800">Add access days</button></div>}
+                <div className="mt-3 space-y-2"><p className="text-xs font-bold uppercase tracking-wide text-slate-500">Published product category audit ({vendor.products.length})</p>{vendor.products.map(product => { const revocationOpen = revocationTarget?.vendorId === vendor.vendor_id && revocationTarget.productId === product.id; const permissionLabel = product.permission_status === 'initial' ? 'Initial category match' : product.permission_status === 'approved-request' ? `Approved request${product.permission_request_id ? ` ${product.permission_request_id}` : ''}` : 'No matching approval'; return <div key={product.id} className="rounded-lg border border-slate-100 bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><p className="truncate text-sm font-bold">{product.title}</p><p className="mt-1 text-xs text-slate-600">{product.category} / {product.subcategory || 'No subcategory'}</p></div><div className="flex items-center gap-2"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold ${product.permission_status === 'unmatched' ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-800'}`}>{permissionLabel}</span><button type="button" onClick={() => { setRevocationTarget(revocationOpen ? null : { vendorId: vendor.vendor_id, productId: product.id }); setRevocationReason(''); }} className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-bold text-rose-700 hover:bg-rose-50">Revoke / remove</button></div></div>{revocationOpen && <div className="mt-3 space-y-2 border-t border-slate-200 pt-3"><p className="text-xs text-slate-600">This removes the listing and records the reason in the vendor’s product-access history.</p><textarea required maxLength={2000} rows={2} value={revocationReason} onChange={event => setRevocationReason(event.target.value)} placeholder="Reason for revoking this product" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"/><div className="flex gap-2"><button type="button" disabled={revoking} onClick={() => void revokeProduct(vendor, product.id)} className="rounded-lg bg-rose-700 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">{revoking ? 'Revoking…' : 'Confirm revocation'}</button><button type="button" disabled={revoking} onClick={() => setRevocationTarget(null)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold">Cancel</button></div></div>}</div>; })}{!vendor.products.length && <p className="text-sm text-slate-500">No products published yet.</p>}</div>
+              </div>}
+            </article>;
+          })}
+          {!visibleVendors.length && <p className="py-8 text-center text-sm text-slate-500">No vendors match this search.</p>}
+        </div>
+        {filteredVendors.length > VENDOR_LIST_PAGE_SIZE && <div className="mt-4 flex items-center justify-between gap-3"><p className="text-xs text-slate-500">Page {currentVendorPage} of {vendorPageCount}</p><div className="flex gap-2"><button type="button" disabled={currentVendorPage === 1} onClick={() => setVendorPage(currentVendorPage - 1)} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Previous</button><button type="button" disabled={currentVendorPage === vendorPageCount} onClick={() => setVendorPage(currentVendorPage + 1)} className="rounded-lg border px-3 py-1.5 text-xs font-bold disabled:opacity-40">Next</button></div></div>}
+      </div>
   </div>;
 }
 function OrdersSection() {
